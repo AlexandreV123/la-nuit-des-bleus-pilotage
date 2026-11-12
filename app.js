@@ -17,7 +17,7 @@ const $app = document.getElementById("app");
 const etat = {
   jeton: lire(CLES.jeton), depot: lire(CLES.depot),
   fiche: null, fichiers: {}, urls: {}, choix: {}, legendeModifiee: {},
-  ordre: {}, retirees: new Set(), minuterie: null,
+  ordre: {}, retirees: new Set(), ton: {}, tagsRetires: {}, minuterie: null,
 };
 
 /* ------------------------------------------------------------------ outils */
@@ -281,14 +281,44 @@ function pubDuChoix(c) {
   return im ? pubDe(im) : "carrousel";
 }
 
-function legendeCourante(pub) {
+function cleLegende(pub) {
   const f = etat.fiche;
   for (const c of f.choix) {
-    if (pubDuChoix(c) === pub && etat.choix[c.id] && c.legende && f.legendes[c.legende]) {
-      return f.legendes[c.legende];
-    }
+    if (pubDuChoix(c) === pub && etat.choix[c.id] && c.legende && f.legendes[c.legende]) return c.legende;
   }
-  return (pub === "carrousel" ? f.legendes.base : f.legendes[pub]) || "";
+  return pub === "carrousel" ? "base" : pub;
+}
+
+/** La légende brute du matin pour la combinaison de choix et le ton retenus. */
+function legendeBrute(pub) {
+  const f = etat.fiche, cle = cleLegende(pub);
+  if (etat.ton[pub] === "passionne" && f.legendes[`${cle}_passionne`]) return f.legendes[`${cle}_passionne`];
+  return f.legendes[cle] || "";
+}
+
+/** Sépare le dernier paragraphe s'il n'est fait que de hashtags. */
+function decouper(texte) {
+  const paras = texte.replace(/\s+$/, "").split(/\n\s*\n/);
+  const dernier = paras[paras.length - 1] || "";
+  const mots = dernier.trim().split(/\s+/);
+  if (paras.length > 1 && mots.length && mots.every((m) => m.startsWith("#"))) {
+    return { corps: paras.slice(0, -1).join("\n\n"), tags: mots };
+  }
+  return { corps: texte.replace(/\s+$/, ""), tags: [] };
+}
+
+function legendeCourante(pub) {
+  const { corps, tags } = decouper(legendeBrute(pub));
+  const gardes = tags.filter((t) => !etat.tagsRetires[pub]?.has(t));
+  return gardes.length ? `${corps}\n\n${gardes.join(" ")}` : corps;
+}
+
+/** Remet la légende à jour dans la zone de texte, sauf si elle a été retouchée à la main. */
+function rafraichirLegende(pub) {
+  const zone = document.getElementById(`legende-${pub}`);
+  if (!zone) return;
+  if (!etat.legendeModifiee[pub]) zone.value = legendeCourante(pub);
+  else toast("Légende modifiée à la main : pensez à la relire.");
 }
 
 function deplacer(pub, fichier, sens) {
@@ -350,10 +380,7 @@ function carteChoix(c) {
     garde.setAttribute("aria-pressed", String(valeur));
     retire.setAttribute("aria-pressed", String(!valeur));
     majApercu();
-    const pub = pubDuChoix(c);
-    const zone = document.getElementById(`legende-${pub}`);
-    if (zone && !etat.legendeModifiee[pub]) zone.value = legendeCourante(pub);
-    else if (zone) toast("Légende modifiée à la main : pensez à la relire.");
+    rafraichirLegende(pubDuChoix(c));
   };
   garde.addEventListener("click", () => basculer(true));
   retire.addEventListener("click", () => basculer(false));
@@ -433,6 +460,40 @@ function enregistrer(fichiers) {
   }
 }
 
+function choixDuTon(pub) {
+  const f = etat.fiche;
+  if (!f.legendes[`${cleLegende(pub)}_passionne`] && !f.legendes.base_passionne) return null;
+  const boutons = [["factuel", "Factuel"], ["passionne", "Passionné"]].map(([ton, nom]) =>
+    el("button", { "aria-pressed": String((etat.ton[pub] || "factuel") === ton), onclick: (e) => {
+      etat.ton[pub] = ton;
+      e.currentTarget.parentElement.querySelectorAll("button")
+        .forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget)));
+      etat.legendeModifiee[pub] = false;          // changer de ton repart du texte du matin
+      rafraichirLegende(pub);
+    } }, nom));
+  return el("div", { class: "bascule ton", role: "group", "aria-label": "Ton de la légende" }, boutons);
+}
+
+function pastillesHashtags(pub, zone) {
+  const { tags } = decouper(legendeBrute(pub));
+  if (!tags.length) return null;
+  etat.tagsRetires[pub] ||= new Set();
+  return el("details", { class: "hashtags" },
+    el("summary", { texte: `Hashtags (${tags.length}) : touche pour retirer ou remettre` }),
+    el("div", { class: "pastilles" }, tags.map((t) => el("button", {
+      class: `pastille tag${etat.tagsRetires[pub].has(t) ? " off" : ""}`,
+      onclick: (e) => {
+        const retires = etat.tagsRetires[pub];
+        if (retires.has(t)) retires.delete(t); else retires.add(t);
+        e.currentTarget.classList.toggle("off", retires.has(t));
+        // on ne touche qu'au paragraphe des hashtags : une retouche du texte est conservée
+        const { corps } = decouper(zone.value);
+        const gardes = decouper(legendeBrute(pub)).tags.filter((x) => !retires.has(x));
+        zone.value = gardes.length ? `${corps}\n\n${gardes.join(" ")}` : corps;
+      },
+    }, t))));
+}
+
 function sectionPublication(pub) {
   const legende = el("textarea", { id: `legende-${pub}`, spellcheck: "true",
                                    oninput: () => (etat.legendeModifiee[pub] = true) });
@@ -450,7 +511,8 @@ function sectionPublication(pub) {
         majApercu();
       } }, "Rétablir")),
     el("div", { class: "defile", id: `apercu-${pub}` }),
-    el("h2", { texte: "La légende", class: "sous-titre" }), legende,
+    el("h2", { texte: "La légende", class: "sous-titre" }),
+    choixDuTon(pub), legende, pastillesHashtags(pub, legende),
     el("div", { class: "rangee" },
       el("button", { class: "btn", onclick: async () => {
         try { await navigator.clipboard.writeText(legende.value); toast("Légende copiée."); }
@@ -477,7 +539,7 @@ async function ecranNuit(nuit) {
   Object.values(etat.urls).forEach((u) => URL.revokeObjectURL(u));
   etat.fiche = fiche; etat.fichiers = {}; etat.urls = {}; etat.legendeModifiee = {};
   etat.choix = Object.fromEntries(fiche.choix.map((c) => [c.id, c.defaut !== false]));
-  etat.retirees = new Set();
+  etat.retirees = new Set(); etat.ton = {}; etat.tagsRetires = {};
   etat.ordre = {}; etat.ordreInitial = {};
   for (const pub of publications()) {
     etat.ordreInitial[pub] = fiche.images.filter((im) => pubDe(im) === pub).map((im) => im.fichier);

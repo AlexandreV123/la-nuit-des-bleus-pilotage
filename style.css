@@ -143,3 +143,10 @@ textarea{width:100%;min-height:220px;background:var(--carte);border:1px solid va
 .lien-publiee{display:block;margin:12px auto 0;color:var(--gris);font-size:14px;font-weight:600;
   text-decoration:underline;text-underline-offset:3px}
 .lien-publiee.fait{color:var(--fluo)}
+
+/* ton de la légende et hashtags */
+.bascule.ton{margin-bottom:10px}
+.hashtags{margin-top:10px}
+.hashtags .pastilles{margin-top:10px}
+.pastille.tag{text-transform:none;letter-spacing:0;font-size:13px;background:rgba(215,255,62,.14);color:var(--fluo)}
+.pastille.tag.off{background:var(--carte2);color:var(--gris);text-decoration:line-through}
