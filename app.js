@@ -223,9 +223,10 @@ function carteEtat(index) {
 }
 
 async function ecranListe() {
-  const relancer = el("button", { class: "icone", "aria-label": "Réglages",
-                                  onclick: () => (location.hash = "#/relancer") }, "⚙");
-  const tete = entete("La nuit des Bleus", "Pilotage", { droite: relancer });
+  const boutons = el("div", { class: "boutons-tete" },
+    el("button", { class: "icone texte", "aria-label": "Les Bleus", onclick: () => (location.hash = "#/bleus") }, "Bleus"),
+    el("button", { class: "icone", "aria-label": "Réglages", onclick: () => (location.hash = "#/relancer") }, "⚙"));
+  const tete = entete("La nuit des Bleus", "Pilotage", { droite: boutons });
   afficher(tete, el("p", { class: "aide", texte: "Chargement…" }));
   let index;
   try {
@@ -563,6 +564,57 @@ async function ecranNuit(nuit) {
   chargerImages(nuit);
 }
 
+/* --- les Bleus : la saison, les records, l'histoire --- */
+
+const nombre = (x) => Number(x).toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+const jjmm = (iso) => { const [a, m, j] = iso.split("-"); return `${j}/${m}/${a}`; };
+
+function ligneJoueur(j) {
+  const max = Math.max(1, ...j.derniers.map((d) => d.pts));
+  return el("details", { class: "carte joueur" },
+    el("summary", {},
+      el("span", { class: "j-nom" }, j.nom, el("em", { texte: `${j.equipe} · ${j.matchs} match${j.matchs > 1 ? "s" : ""} · ${nombre(j.min)} min` })),
+      el("span", { class: "j-moy" }, el("b", { texte: nombre(j.pts) }), " pts")),
+    el("p", { class: "aide", texte: `${nombre(j.reb)} rebonds · ${nombre(j.ast)} passes · ${nombre(j.blk)} contres · ${nombre(j.stl)} interceptions · ${nombre(j.fg3m)} à 3 pts` }),
+    el("div", { class: "mini" }, j.derniers.map((d) => el("div", { class: "mini-col" },
+      el("span", { texte: d.pts }), el("i", { style: null, "data-h": Math.max(4, Math.round(d.pts / max * 56)) }),
+      el("small", { texte: d.adversaire })))),
+    el("p", { class: "aide", texte: "Records en carrière : " + ["pts", "reb", "ast", "blk"].map((c) => {
+      const r = j.records_carriere[c];
+      return `${r.valeur} ${{ pts: "pts", reb: "reb", ast: "pd", blk: "ctr" }[c]} (${jjmm(r.date)} vs ${r.adversaire})`;
+    }).join(" · ") }));
+}
+
+async function ecranBleus() {
+  const tete = entete("Les Bleus", "Chargement…", { retour: true });
+  afficher(tete, el("p", { class: "aide", texte: "Chargement…" }));
+  let f;
+  try {
+    f = await (await contenu("bleus.json")).json();
+  } catch (x) {
+    if (x.message === "401") return;
+    afficher(tete, el("div", { class: "carte alerte" }, el("p", { texte: "La fiche des Bleus arrivera avec le prochain carrousel du matin." })));
+    return;
+  }
+  afficher(
+    entete("Les Bleus", `Saison ${f.saison} · au ${jjmm(f.jusqua)}`, { retour: true }),
+    el("section", { class: "section" }, el("h2", { texte: "La saison, par points" }),
+      el("div", { class: "liste" }, f.joueurs.map(ligneJoueur))),
+    f.records_saison.length ? el("section", { class: "section" }, el("h2", { texte: "Records français de la saison" }),
+      el("div", { class: "carte" }, f.records_saison.map((r) => el("div", { class: "lancement" },
+        el("span", {}, el("b", { texte: `${r.valeur} ${r.stat}` }), ` · ${r.joueur}`),
+        el("span", { class: "aide", texte: `${jjmm(r.date)} vs ${r.adversaire}` }))))) : null,
+    el("section", { class: "section" }, el("h2", { texte: "Meilleurs marqueurs français de l'histoire" }),
+      el("div", { class: "carte" }, f.marqueurs.map((m, i) => el("div", { class: "lancement" },
+        el("span", {}, `${i + 1}. `, el("b", { class: m.actif ? "ok" : null, texte: m.joueur }), m.actif ? " · en activité" : ""),
+        el("span", { texte: `${nombre(m.pts)} pts · ${nombre(m.matchs)} m.` }))))),
+    f.demain && f.demain.length ? el("section", { class: "section" }, el("h2", { texte: "La nuit prochaine" }),
+      el("div", { class: "pastilles" }, f.demain.map((d) => el("span", { class: "pastille", texte: d })))) : null,
+    el("p", { class: "aide note", texte: f.note }));
+  // hauteurs des mini-barres posées après coup : la politique de sécurité interdit les styles en ligne
+  document.querySelectorAll(".mini i[data-h]").forEach((i) => { i.style.height = `${i.dataset.h}px`; });
+}
+
 /* --- notifications --- */
 
 function octetsDepuisB64(b64) {
@@ -687,6 +739,7 @@ function router() {
   const route = location.hash.replace(/^#\/?/, "");
   if (route.startsWith("nuit/")) ecranNuit(route.slice(5));
   else if (route === "relancer") ecranRelancer();
+  else if (route === "bleus") ecranBleus();
   else ecranListe();
 }
 

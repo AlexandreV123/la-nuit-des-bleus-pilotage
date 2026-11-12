@@ -150,3 +150,22 @@ textarea{width:100%;min-height:220px;background:var(--carte);border:1px solid va
 .hashtags .pastilles{margin-top:10px}
 .pastille.tag{text-transform:none;letter-spacing:0;font-size:13px;background:rgba(215,255,62,.14);color:var(--fluo)}
 .pastille.tag.off{background:var(--carte2);color:var(--gris);text-decoration:line-through}
+
+/* onglet « Les Bleus » */
+.boutons-tete{display:flex;gap:8px}
+.icone.texte{width:auto;padding:0 14px;font-weight:800;font-size:14px;letter-spacing:.06em;text-transform:uppercase}
+.joueur summary{display:flex;justify-content:space-between;align-items:center;gap:12px;list-style:none;cursor:pointer}
+.joueur summary::-webkit-details-marker{display:none}
+.j-nom{font-weight:700;font-size:17px}
+.j-nom em{display:block;font-style:normal;font-size:13px;color:var(--gris);font-weight:600;margin-top:2px}
+.j-moy{color:var(--gris);font-size:14px;white-space:nowrap}
+.j-moy b{font-family:Archivo,sans-serif;font-weight:900;font-size:24px;color:var(--fluo)}
+.joueur .aide{margin-top:10px}
+.mini{display:flex;gap:10px;align-items:flex-end;margin-top:12px;height:96px}
+.mini-col{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1}
+.mini-col span{font-size:13px;font-weight:700}
+.mini-col i{display:block;width:100%;max-width:36px;background:#1C2434;border-radius:5px 5px 0 0}
+.mini-col:last-child i{background:var(--fluo)}
+.mini-col small{font-size:11px;color:var(--gris)}
+.note{margin-top:20px;font-size:12px}
+b.ok{color:var(--fluo)}
