@@ -118,3 +118,28 @@ textarea{width:100%;min-height:220px;background:var(--carte);border:1px solid va
   background:var(--txt);color:var(--fond);padding:12px 18px;border-radius:12px;font-weight:700;
   font-size:14px;transition:.2s;pointer-events:none;max-width:90vw;text-align:center;z-index:10}
 #toast.vu{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* état du matin */
+.etat{display:flex;flex-direction:column;gap:10px;margin-bottom:6px}
+.etat-tete{display:flex;align-items:center;gap:10px;font-size:18px}
+.etat-tete strong{font-family:Archivo,sans-serif;font-weight:900;text-transform:uppercase}
+.voyant{width:12px;height:12px;border-radius:50%;flex:none;background:var(--gris)}
+.voyant.ok,.voyant.fluo{background:var(--fluo)}
+.voyant.fluo{box-shadow:0 0 0 4px rgba(215,255,62,.18)}
+.voyant.ko{background:var(--rouge)}
+.voyant.encours{background:var(--txt);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.3}}
+
+/* retirer ou déplacer une image */
+.titre-section{display:flex;justify-content:space-between;align-items:baseline}
+.lien{color:var(--fluo);font-weight:700;font-size:14px}
+.commandes{display:grid;grid-template-columns:44px 1fr 44px;gap:6px;margin-top:6px}
+.commandes button{padding:9px 0;border-radius:10px;background:var(--carte);border:1px solid var(--bord);
+  font-weight:700;font-size:14px}
+.commandes button:disabled{opacity:.3}
+.vignette.retiree img,.vignette.retiree .vide{opacity:.25;filter:grayscale(1)}
+.vignette.retiree .rang{background:var(--rouge);color:#fff}
+.vignette.retiree .retrait{color:var(--fluo)}
+.lien-publiee{display:block;margin:12px auto 0;color:var(--gris);font-size:14px;font-weight:600;
+  text-decoration:underline;text-underline-offset:3px}
+.lien-publiee.fait{color:var(--fluo)}

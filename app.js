@@ -5,18 +5,19 @@
  * « contenus ») avec le code d'accès saisi au premier lancement, qui reste sur le
  * téléphone. Sans ce code, on ne voit que l'écran de connexion.
  *
- * Les choix (garder ou non un encart…) ne relancent aucune fabrication : toutes les
- * variantes sont déjà rendues, l'appli ne fait que les assembler.
+ * Les choix (garder ou non un encart, retirer ou déplacer une image…) ne relancent
+ * aucune fabrication : toutes les variantes sont déjà rendues, l'appli les assemble.
  */
 
 const API = "https://api.github.com";
 const WORKFLOW = "matin.yml";
-const CLES = { jeton: "ndb.jeton", depot: "ndb.depot" };
+const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie" };
 const $app = document.getElementById("app");
 
 const etat = {
   jeton: lire(CLES.jeton), depot: lire(CLES.depot),
-  fiche: null, fichiers: {}, urls: {}, choix: {}, legendeModifiee: {}, minuterie: null,
+  fiche: null, fichiers: {}, urls: {}, choix: {}, legendeModifiee: {},
+  ordre: {}, retirees: new Set(), minuterie: null,
 };
 
 /* ------------------------------------------------------------------ outils */
@@ -25,6 +26,7 @@ function lire(cle) { try { return localStorage.getItem(cle); } catch { return nu
 function garder(cle, valeur) {
   try { valeur == null ? localStorage.removeItem(cle) : localStorage.setItem(cle, valeur); } catch { /* navigation privée */ }
 }
+function lireJSON(cle, defaut) { try { return JSON.parse(lire(cle)) ?? defaut; } catch { return defaut; } }
 
 function el(tag, attrs = {}, ...enfants) {
   const n = document.createElement(tag);
@@ -70,10 +72,36 @@ function resumeTexte(r) {
   return `${r.joueurs} Français · ${r.matchs} match${r.matchs > 1 ? "s" : ""} · ${r.victoires}V-${r.defaites}D`;
 }
 
+const fmtJour = (d) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris" }).format(d);
+
 /** La nuit NBA en cours de traitement : heure de New York moins 6 h. */
 function nuitNBA() {
   const d = new Date(Date.now() - 6 * 3600e3);
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+}
+
+/** La nuit qui devrait être prête maintenant : celle d'hier à partir de 7h15 à Paris. */
+function nuitAttendue() {
+  const heure = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", hourCycle: "h23" })
+    .formatToParts(new Date()).find((p) => p.type === "hour").value);
+  const recul = heure >= 7 ? 1 : 2;
+  return fmtJour(new Date(Date.now() - recul * 86400e3));
+}
+
+const heureCourte = (iso) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+/* --- publications déjà faites, mémorisées sur ce téléphone --- */
+
+function publiees() { return lireJSON(CLES.publie, {}); }
+function estPubliee(nuit, pub) { return Boolean(publiees()[nuit]?.[pub]); }
+function marquerPubliee(nuit, pub, oui) {
+  const p = publiees();
+  if (oui) (p[nuit] ||= {})[pub] = new Date().toISOString();
+  else if (p[nuit]) { delete p[nuit][pub]; if (!Object.keys(p[nuit]).length) delete p[nuit]; }
+  // on ne garde que les 30 dernières nuits
+  const cles = Object.keys(p).sort().reverse();
+  for (const vieille of cles.slice(30)) delete p[vieille];
+  garder(CLES.publie, JSON.stringify(p));
 }
 
 /* ------------------------------------------------------------------ GitHub */
@@ -109,6 +137,11 @@ async function trouverDepot() {
     if (b.ok) return d.full_name;
   }
   throw new Error("Ce code n'ouvre aucun espace de contenus. Vérifiez le dépôt autorisé.");
+}
+
+async function dernierLancement() {
+  const r = await (await gh(`/repos/${etat.depot}/actions/workflows/${WORKFLOW}/runs?per_page=1`)).json();
+  return r.workflow_runs[0] || null;
 }
 
 function deconnecter(message) {
@@ -148,6 +181,46 @@ function ecranConnexion(message) {
   afficher(formulaire);
 }
 
+/* --- accueil : l'état du matin, puis les nuits --- */
+
+function carteEtat(index) {
+  const zone = el("div", { class: "carte etat" }, el("p", { class: "aide", texte: "État du matin…" }));
+  (async () => {
+    const attendue = nuitAttendue();
+    const prete = (index.nuits || []).find((n) => n.nuit === attendue);
+    let run = null;
+    try { run = await dernierLancement(); } catch (x) { if (x.message === "401") return; }
+    const enCours = run && run.status !== "completed";
+    let voyant, titre, detail, action = null;
+    if (prete) {
+      const fait = estPubliee(prete.nuit, "carrousel");
+      voyant = fait ? "ok" : "fluo";
+      titre = fait ? "Publiée ✓" : "Prête à publier";
+      detail = `Nuit du ${prete.date_fr} · générée à ${heureCourte(prete.genere_le)}`;
+      action = el("button", { class: "btn principal", onclick: () => (location.hash = `#/nuit/${prete.nuit}`) },
+        fait ? "Revoir" : "Ouvrir");
+    } else if (enCours) {
+      voyant = "encours"; titre = "En préparation…";
+      detail = `Lancement ${run.event === "schedule" ? "automatique" : "manuel"} de ${heureCourte(run.created_at)}`;
+    } else if (run && run.conclusion === "failure") {
+      voyant = "ko"; titre = "Échec du dernier lancement";
+      detail = `${heureCourte(run.created_at)} : la nuit n'a pas été produite.`;
+      action = el("button", { class: "btn", onclick: () => (location.hash = "#/relancer") }, "Relancer");
+    } else if (run && run.conclusion === "success" && fmtJour(new Date(run.created_at)) === fmtJour(new Date())
+               && new Date(run.created_at).getUTCHours() >= 5) {
+      voyant = "neutre"; titre = "Rien à publier";
+      detail = "Le lancement du matin a réussi, mais aucun Français n'a joué cette nuit.";
+    } else {
+      voyant = "neutre"; titre = "Pas encore prête";
+      detail = "Le carrousel arrive en général vers 7h15.";
+    }
+    zone.replaceChildren(...[
+      el("div", { class: "etat-tete" }, el("span", { class: `voyant ${voyant}` }), el("strong", { texte: titre })),
+      el("p", { class: "aide", texte: detail }), action].filter(Boolean));
+  })();
+  return zone;
+}
+
 async function ecranListe() {
   const relancer = el("button", { class: "icone", "aria-label": "Relancer une nuit",
                                   onclick: () => (location.hash = "#/relancer") }, "↻");
@@ -167,29 +240,40 @@ async function ecranListe() {
     el("span", { class: "date", texte: n.date_fr || n.nuit }),
     el("span", { class: "meta", texte: resumeTexte(n.resume) }),
     el("span", { class: "pastilles" },
+      estPubliee(n.nuit, "carrousel") ? el("span", { class: "pastille fluo", texte: "Publiée ✓" }) : null,
       el("span", { class: "pastille", texte: `${n.images} images` }),
-      n.choix ? el("span", { class: "pastille fluo", texte: n.choix > 1 ? `${n.choix} choix à faire` : "1 choix à faire" }) : null,
+      n.choix ? el("span", { class: "pastille", texte: n.choix > 1 ? `${n.choix} choix` : "1 choix" }) : null,
       n.alertes ? el("span", { class: "pastille rouge", texte: "à vérifier" }) : null)));
-  afficher(tete, el("div", { class: "liste" },
-    cartes.length ? cartes : el("p", { class: "aide", texte: "Aucune nuit publiée pour l'instant." })));
+  afficher(tete, carteEtat(index),
+    el("section", { class: "section" }, el("h2", { texte: "Les nuits" }),
+      el("div", { class: "liste" },
+        cartes.length ? cartes : el("p", { class: "aide", texte: "Aucune nuit publiée pour l'instant." }))));
 }
 
 /* --- une nuit ---
  * Une nuit peut contenir plusieurs publications : le carrousel du matin, et des
  * posts à part (citations…), repérés par la clé « publication » de chaque image.
- * Chaque publication a son aperçu, sa légende et son bouton « Publier ». */
+ * Chaque publication a son aperçu, sa légende et son bouton « Publier ».
+ * Chaque image peut être retirée ou déplacée ; l'ordre de départ est celui du matin. */
 
 const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations" };
 const pubDe = (im) => im.publication || "carrousel";
 const nomPublication = (pub) => NOMS_PUBLICATION[pub] || pub;
+const image = (fichier) => etat.fiche.images.find((im) => im.fichier === fichier);
 
 function publications() {
   return [...new Set(etat.fiche.images.map(pubDe))];
 }
 
+/** Les images d'une publication dans l'ordre courant, sauf celles écartées par un choix. */
+function visibles(pub) {
+  return etat.ordre[pub].map(image)
+    .filter((im) => !(im.facultative && im.choix && etat.choix[im.choix] === false));
+}
+
+/** Ce qui sera publié : les visibles, moins celles retirées à la main. */
 function selection(pub) {
-  return etat.fiche.images.filter((im) => pubDe(im) === pub
-    && !(im.facultative && im.choix && etat.choix[im.choix] === false));
+  return visibles(pub).filter((im) => !etat.retirees.has(im.fichier));
 }
 
 function pubDuChoix(c) {
@@ -207,24 +291,54 @@ function legendeCourante(pub) {
   return (pub === "carrousel" ? f.legendes.base : f.legendes[pub]) || "";
 }
 
-function vignette(im, rang, total) {
+function deplacer(pub, fichier, sens) {
+  const vis = visibles(pub).map((im) => im.fichier);
+  const i = vis.indexOf(fichier), j = i + sens;
+  if (i < 0 || j < 0 || j >= vis.length) return;
+  const ordre = etat.ordre[pub];
+  const a = ordre.indexOf(vis[i]), b = ordre.indexOf(vis[j]);
+  [ordre[a], ordre[b]] = [ordre[b], ordre[a]];
+  majApercu();
+}
+
+function basculerRetrait(fichier) {
+  if (etat.retirees.has(fichier)) etat.retirees.delete(fichier); else etat.retirees.add(fichier);
+  majApercu();
+}
+
+function vignette(pub, im, rang, total, premiere, derniere) {
   const url = etat.urls[im.fichier];
-  return el("figure", { class: `vignette${im.facultative ? " facultative" : ""}` },
+  const retiree = etat.retirees.has(im.fichier);
+  return el("figure", { class: `vignette${im.facultative ? " facultative" : ""}${retiree ? " retiree" : ""}` },
     url ? el("img", { src: url, alt: im.titre }) : el("div", { class: "vide", texte: "Chargement…" }),
-    el("figcaption", { class: "rang", texte: `${rang}/${total} · ${im.titre}` }));
+    el("figcaption", { class: "rang", texte: retiree ? `retirée · ${im.titre}` : `${rang}/${total} · ${im.titre}` }),
+    el("div", { class: "commandes" },
+      el("button", { "aria-label": "Avancer", disabled: premiere, onclick: () => deplacer(pub, im.fichier, -1) }, "◀"),
+      el("button", { class: "retrait", onclick: () => basculerRetrait(im.fichier) }, retiree ? "Remettre" : "Retirer"),
+      el("button", { "aria-label": "Reculer", disabled: derniere, onclick: () => deplacer(pub, im.fichier, 1) }, "▶")));
 }
 
 function majApercu() {
   for (const pub of publications()) {
     const zone = document.getElementById(`apercu-${pub}`);
     if (!zone) continue;
-    const sel = selection(pub);
-    zone.replaceChildren(...(sel.length ? sel.map((im, i) => vignette(im, i + 1, sel.length))
+    const vis = visibles(pub);
+    const total = selection(pub).length;
+    let rang = 0;
+    zone.replaceChildren(...(vis.length
+      ? vis.map((im, i) => vignette(pub, im, etat.retirees.has(im.fichier) ? 0 : ++rang, total,
+                                    i === 0, i === vis.length - 1))
       : [el("p", { class: "aide", texte: "Rien de retenu : rien à publier." })]));
     document.getElementById(`compte-${pub}`).textContent =
-      `${nomPublication(pub)} · ${sel.length} image${sel.length > 1 ? "s" : ""}`;
+      `${nomPublication(pub)} · ${total} image${total > 1 ? "s" : ""}`;
     const bouton = document.getElementById(`publier-${pub}`);
-    if (bouton) bouton.disabled = !sel.length;
+    if (bouton) bouton.disabled = !total;
+    const retablir = document.getElementById(`retablir-${pub}`);
+    if (retablir) {
+      const modifie = etat.ordre[pub].some((f, i) => f !== etat.ordreInitial[pub][i])
+        || etat.ordre[pub].some((f) => etat.retirees.has(f));
+      retablir.classList.toggle("cache", !modifie);
+    }
   }
 }
 
@@ -282,6 +396,14 @@ function fichiersDe(pub) {
     `${String(i + 1).padStart(2, "0")}.png`, { type: "image/png" }));
 }
 
+function majMarquePublication(pub) {
+  const marque = document.getElementById(`publiee-${pub}`);
+  if (!marque) return;
+  const oui = estPubliee(etat.fiche.nuit, pub);
+  marque.textContent = oui ? "Publiée ✓ · annuler" : "Marquer comme publiée";
+  marque.classList.toggle("fait", oui);
+}
+
 async function publier(pub) {
   const sel = selection(pub);
   if (!sel.length) return;
@@ -292,6 +414,8 @@ async function publier(pub) {
   if (navigator.canShare && navigator.canShare({ files: fichiers })) {
     try {
       await navigator.share({ files: fichiers });
+      marquerPubliee(etat.fiche.nuit, pub, true);
+      majMarquePublication(pub);
       toast(copiee ? "Légende copiée : collez-la dans Instagram." : "Pensez à copier la légende.");
     } catch (x) {
       if (x.name !== "AbortError") toast(`Partage impossible : ${x.message}`);
@@ -313,8 +437,18 @@ function sectionPublication(pub) {
   const legende = el("textarea", { id: `legende-${pub}`, spellcheck: "true",
                                    oninput: () => (etat.legendeModifiee[pub] = true) });
   legende.value = legendeCourante(pub);
-  return el("section", { class: "section" },
-    el("h2", { id: `compte-${pub}` }),
+  const marque = el("button", { class: "lien-publiee", id: `publiee-${pub}`, onclick: () => {
+    marquerPubliee(etat.fiche.nuit, pub, !estPubliee(etat.fiche.nuit, pub));
+    majMarquePublication(pub);
+  } });
+  const section = el("section", { class: "section" },
+    el("div", { class: "titre-section" },
+      el("h2", { id: `compte-${pub}` }),
+      el("button", { class: "lien cache", id: `retablir-${pub}`, onclick: () => {
+        etat.ordre[pub] = [...etat.ordreInitial[pub]];
+        etat.ordre[pub].forEach((f) => etat.retirees.delete(f));
+        majApercu();
+      } }, "Rétablir")),
     el("div", { class: "defile", id: `apercu-${pub}` }),
     el("h2", { texte: "La légende", class: "sous-titre" }), legende,
     el("div", { class: "rangee" },
@@ -324,7 +458,9 @@ function sectionPublication(pub) {
       } }, "Copier la légende"),
       el("button", { class: "btn", onclick: () => enregistrer(fichiersDe(pub)) }, "Enregistrer")),
     el("button", { class: "btn principal publier", id: `publier-${pub}`, onclick: () => publier(pub) },
-      publications().length > 1 ? `Publier ${nomPublication(pub).toLowerCase()}` : "Publier sur Instagram"));
+      publications().length > 1 ? `Publier ${nomPublication(pub).toLowerCase()}` : "Publier sur Instagram"),
+    marque);
+  return section;
 }
 
 async function ecranNuit(nuit) {
@@ -341,6 +477,12 @@ async function ecranNuit(nuit) {
   Object.values(etat.urls).forEach((u) => URL.revokeObjectURL(u));
   etat.fiche = fiche; etat.fichiers = {}; etat.urls = {}; etat.legendeModifiee = {};
   etat.choix = Object.fromEntries(fiche.choix.map((c) => [c.id, c.defaut !== false]));
+  etat.retirees = new Set();
+  etat.ordre = {}; etat.ordreInitial = {};
+  for (const pub of publications()) {
+    etat.ordreInitial[pub] = fiche.images.filter((im) => pubDe(im) === pub).map((im) => im.fichier);
+    etat.ordre[pub] = [...etat.ordreInitial[pub]];
+  }
 
   afficher(
     entete(fiche.date_fr || fiche.nuit, resumeTexte(fiche.resume), { retour: true }),
@@ -353,6 +495,7 @@ async function ecranNuit(nuit) {
           el("div", { class: "liste" }, fiche.choix.map(carteChoix)))
       : null,
     publications().map(sectionPublication));
+  publications().forEach(majMarquePublication);
   majApercu();
   chargerImages(nuit);
 }
