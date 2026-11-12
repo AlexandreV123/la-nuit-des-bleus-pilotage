@@ -623,6 +623,67 @@ async function ecranBleus() {
 /* --- citations : la veille propose, on choisit, GitHub met en forme --- */
 
 const FORMATS = { statement: "Citation seule", joueur: "Carrousel même joueur", mix: "Carrousel plusieurs Français" };
+const MOMENTS = { apres: "Après le match", avant: "Avant le match", entrainement: "À l'entraînement" };
+const TEXTE_MAX = 400, CONTEXTE_MAX = 220;
+
+/** Ce qui part au moteur : seulement ce qui diffère de la détection automatique. */
+function optionsDe(c) {
+  const o = etat.citOpt[c.id] || {};
+  const sortie = {};
+  if (o.texte != null && o.texte.trim() && o.texte.trim() !== c.citation) sortie.texte = o.texte.trim().slice(0, TEXTE_MAX);
+  if (o.contexte && o.contexte.trim()) sortie.contexte = o.contexte.trim().slice(0, CONTEXTE_MAX);
+  if (o.moment && o.moment !== "auto") sortie.moment = o.moment;
+  return sortie;
+}
+
+function reglagesCitation(c) {
+  const o = (etat.citOpt[c.id] ||= { texte: c.citation, contexte: "", moment: "auto" });
+  const compte = (zone, max, sortie) => () => { sortie.textContent = `${zone.value.length}/${max}`;
+    sortie.classList.toggle("trop", zone.value.length > max); };
+
+  // le texte de la slide
+  const texte = el("textarea", { class: "court", maxlength: String(TEXTE_MAX) });
+  texte.value = o.texte;
+  const compteTexte = el("small", { class: "compteur" });
+  const majTexte = compte(texte, TEXTE_MAX, compteTexte);
+  texte.addEventListener("input", () => { o.texte = texte.value; majTexte(); });
+  majTexte();
+  const boutonsTexte = el("div", { class: "rangee petite" },
+    el("button", { class: "btn", onclick: () => { texte.value = c.citation; o.texte = c.citation; majTexte(); } }, "Extrait court"),
+    c.complete && c.complete !== c.citation
+      ? el("button", { class: "btn", onclick: () => { texte.value = c.complete.slice(0, TEXTE_MAX); o.texte = texte.value; majTexte();
+          if (c.complete.length > TEXTE_MAX) toast(`Propos coupé à ${TEXTE_MAX} caractères : à retoucher.`); } }, "Propos complet")
+      : null);
+
+  // la phrase de contexte : une proposition ou un texte libre
+  const contexte = el("input", { type: "text", maxlength: String(CONTEXTE_MAX), placeholder: "Aucune phrase de contexte" });
+  contexte.value = o.contexte;
+  const compteCtx = el("small", { class: "compteur" });
+  const majCtx = compte(contexte, CONTEXTE_MAX, compteCtx);
+  contexte.addEventListener("input", () => { o.contexte = contexte.value; majCtx(); });
+  majCtx();
+  const propositions = (c.contextes_proposes || []).filter(Boolean);
+
+  // le moment du propos
+  const moment = el("select", {},
+    [["auto", `Automatique${c.match?.moment ? ` (${MOMENTS[c.match.moment] || c.match.moment})` : " (aucun)"}`],
+     ["apres", "Après le match"], ["avant", "Avant le match"], ["entrainement", "À l'entraînement"],
+     ["aucun", "Pas de bandeau"]].map(([v, t]) => el("option", { value: v, texte: t })));
+  moment.value = o.moment;
+  moment.addEventListener("change", () => { o.moment = moment.value; });
+
+  return el("div", { class: "reglages" },
+    el("label", { class: "r-titre", texte: "Texte de la slide" }), texte,
+    el("div", { class: "r-pied" }, boutonsTexte, compteTexte),
+    el("label", { class: "r-titre", texte: "Phrase de contexte (à droite du guillemet)" }),
+    propositions.length ? el("div", { class: "pastilles" },
+      el("button", { class: "pastille tag off", onclick: () => { contexte.value = ""; o.contexte = ""; majCtx(); } }, "Aucune"),
+      propositions.map((p) => el("button", { class: "pastille tag", title: p,
+        onclick: () => { contexte.value = p.slice(0, CONTEXTE_MAX); o.contexte = contexte.value; majCtx(); } },
+        p.length > 60 ? `${p.slice(0, 58)}…` : p))) : null,
+    contexte, el("div", { class: "r-pied" }, el("span"), compteCtx),
+    el("label", { class: "r-titre", texte: "Moment du propos" }), moment);
+}
 /** Le dossier d'une production, depuis la racine de la branche (l'index le note sans « citations/ »). */
 const cheminProduction = (p) => (p.dossier.startsWith("citations/") ? p.dossier : `citations/${p.dossier}`);
 
@@ -638,17 +699,28 @@ const quandCourt = (iso) => new Date(iso).toLocaleString("fr-FR", { weekday: "sh
 function carteCandidat(c, majBarre) {
   const coche = el("input", { type: "checkbox", id: `c-${c.id}` });
   coche.checked = etat.citSel.has(c.id);
+  const zoneReglages = el("div", {});
+  const majReglages = () => zoneReglages.replaceChildren(...(coche.checked ? [reglagesCitation(c)] : []));
   coche.addEventListener("change", () => {
     if (coche.checked) etat.citSel.add(c.id); else etat.citSel.delete(c.id);
     carte.classList.toggle("choisie", coche.checked);
+    majReglages();
     majBarre();
   });
+  const m = c.match;
+  const lireArticle = (c.article || []).length
+    ? el("details", {}, el("summary", { texte: "Lire plus de l'article" }),
+        el("div", { class: "article" }, c.article.map((p, i) =>
+          el("p", { class: i === c.article_position ? "cite" : null, texte: p }))),
+        el("p", { class: "aide" }, el("a", { href: c.lien, target: "_blank", rel: "noopener noreferrer" }, "Ouvrir l'article complet")))
+    : null;
   const qui = c.relation && c.relation !== "de" ? `${c.orateur} · ${c.relation}` : c.orateur;
   const carte = el("div", { class: `carte citation${coche.checked ? " choisie" : ""}` },
     el("label", { for: `c-${c.id}`, class: "cit-tete" }, coche,
       el("span", { class: "cit-texte", texte: `« ${c.citation} »` })),
     el("p", { class: "cit-qui", texte: qui }),
-    c.match?.contexte_fr ? el("p", { class: "aide", texte: c.match.contexte_fr }) : null,
+    m ? el("p", { class: "aide" }, m.contexte_fr || MOMENTS[m.moment] || "",
+          m.moment_source === "heure" ? el("span", { class: "pastille rouge mini-p", texte: "moment à vérifier" }) : null) : null,
     el("div", { class: "pastilles" },
       el("span", { class: `pastille${c.suggestion === "garder" ? " fluo" : ""}`,
                    texte: c.suggestion === "garder" ? "Suggestion : garder" : "Suggestion : retirer" }),
@@ -656,11 +728,14 @@ function carteCandidat(c, majBarre) {
       c.langue && c.langue !== "fr" ? el("span", { class: "pastille", texte: `en ${c.langue}` }) : null),
     c.raison ? el("p", { class: "aide", texte: c.raison }) : null,
     (c.a_verifier || []).length ? el("p", { class: "erreur", texte: `À vérifier : ${c.a_verifier.join(" · ")}` }) : null,
-    el("details", {}, el("summary", { texte: "Lire le passage" }),
+    lireArticle,
+    el("details", {}, el("summary", { texte: lireArticle ? "Le passage et la source" : "Lire le passage" }),
       c.question ? el("p", { class: "aide", texte: `Question : ${c.question}` }) : null,
       el("p", { class: "cit-contexte", texte: c.contexte || c.complete || c.citation }),
       el("p", { class: "aide" }, `${(c.sources || []).join(", ")}${c.publiee ? ` · ${quandCourt(c.publiee)}` : ""} · `,
-        el("a", { href: c.lien, target: "_blank", rel: "noopener noreferrer" }, "l'article"))));
+        el("a", { href: c.lien, target: "_blank", rel: "noopener noreferrer" }, "l'article"))),
+    zoneReglages);
+  majReglages();
   return carte;
 }
 
@@ -717,6 +792,7 @@ async function ecranCitations() {
     productions = (await (await contenu("citations/index.json")).json()).productions || [];
   } catch (x) { if (x.message === "401") return; }
   etat.citSel ||= new Set();
+  etat.citOpt ||= {};
   const connus = new Set(candidats.map((c) => c.id));
   etat.citSel.forEach((id) => { if (!connus.has(id)) etat.citSel.delete(id); });
 
@@ -735,9 +811,12 @@ async function ecranCitations() {
     bouton.disabled = true;
     try {
       await gh(`/repos/${etat.depot}/actions/workflows/${CITATIONS}/dispatches`, {
-        methode: "POST", corps: { ref: "main", inputs: { mode: "generer", ids: choisies.map((c) => c.id).join(",") } } });
+        methode: "POST", corps: { ref: "main", inputs: { mode: "generer", ids: choisies.map((c) => c.id).join(","),
+          options: JSON.stringify(Object.fromEntries(choisies.map((c) => [c.id, optionsDe(c)])
+            .filter(([, o]) => Object.keys(o).length))) } } });
       garder(CLES.generation, JSON.stringify({ ids: choisies.map((c) => c.id), format: fmt, depuis: Date.now() }));
       etat.citSel.clear();
+      etat.citOpt = {};
       ecranCitations();
     } catch (x) {
       if (x.message !== "401") toast(`Lancement refusé : ${x.message}`);
