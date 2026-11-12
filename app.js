@@ -664,6 +664,21 @@ function carteCandidat(c, majBarre) {
   return carte;
 }
 
+/** Les sources que la dernière veille n'a pas pu lire : la liste peut être incomplète. */
+function bandeauSources(sources) {
+  if (!sources.length) return null;
+  const enPanne = sources.filter((s) => s.etat === "ko");
+  return el("details", { class: `carte sources${enPanne.length ? " panne" : ""}` },
+    el("summary", { texte: enPanne.length
+      ? `Sources en panne à la dernière veille : ${enPanne.map((s) => s.nom).join(", ")}`
+      : `${sources.length} sources lues à la dernière veille` }),
+    el("div", {}, sources.map((s) => el("div", { class: "lancement" },
+      el("span", { class: s.etat === "ok" ? null : "ko", texte: s.nom }),
+      el("span", { class: "aide", texte: s.etat === "ok"
+        ? `${s.articles ?? 0} article${(s.articles ?? 0) > 1 ? "s" : ""} · ${s.citations ?? 0} citation${(s.citations ?? 0) > 1 ? "s" : ""}`
+        : (s.erreur || "inaccessible") })))));
+}
+
 async function suivreGeneration(zone) {
   const g = lireJSON(CLES.generation, null);
   if (!g) { zone.replaceChildren(); return; }
@@ -692,9 +707,11 @@ async function suivreGeneration(zone) {
 async function ecranCitations() {
   const tete = entete("Citations", "Chargement…", { retour: true });
   afficher(tete, el("p", { class: "aide", texte: "Chargement…" }));
-  let candidats = [], productions = [];
+  let candidats = [], productions = [], sources = [];
   try {
-    candidats = (await (await contenu("citations/candidats.json")).json()).candidats || [];
+    const veille = await (await contenu("citations/candidats.json")).json();
+    candidats = veille.candidats || [];
+    sources = veille.sources || [];
   } catch (x) { if (x.message === "401") return; }
   try {
     productions = (await (await contenu("citations/index.json")).json()).productions || [];
@@ -738,6 +755,7 @@ async function ecranCitations() {
   afficher(
     entete("Citations", candidats.length ? `${candidats.length} repérée${candidats.length > 1 ? "s" : ""} · 4 derniers jours` : "Veille des déclarations", { retour: true }),
     suivi,
+    bandeauSources(sources),
     productions.length ? el("section", { class: "section" }, el("h2", { texte: "Prêtes à publier" }),
       el("div", { class: "liste" }, productions.map((p) => el("button", {
         class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(cheminProduction(p))}`),

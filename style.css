@@ -183,3 +183,8 @@ b.ok{color:var(--fluo)}
 .cit-qui{font-weight:700;color:var(--fluo);font-size:14px}
 .cit-contexte{font-size:14px;line-height:1.5;margin:8px 0;color:var(--txt)}
 .citation a{color:var(--fluo)}
+
+.sources{margin-bottom:6px}
+.sources summary{font-size:14px;color:var(--gris);font-weight:600}
+.sources.panne summary{color:var(--rouge)}
+.sources > div{margin-top:8px}
