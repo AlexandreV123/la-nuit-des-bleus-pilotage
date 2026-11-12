@@ -203,3 +203,8 @@ b.ok{color:var(--fluo)}
 .article p{font-size:14px;line-height:1.55;color:var(--gris)}
 .article p.cite{color:var(--txt);border-left:3px solid var(--fluo);padding-left:10px}
 .pastille.mini-p{margin-left:8px;font-size:10px;padding:3px 8px}
+
+/* alertes de la veille des citations (à faire depuis le PC) */
+.alerte-orange{border-color:rgba(255,166,43,.55);background:rgba(255,166,43,.08);margin-bottom:6px;
+  display:flex;flex-direction:column;gap:6px}
+.alerte-orange p{font-size:14px;color:#FFC46B;line-height:1.45}

@@ -786,11 +786,12 @@ async function suivreGeneration(zone) {
 async function ecranCitations() {
   const tete = entete("Citations", "Chargement…", { retour: true });
   afficher(tete, el("p", { class: "aide", texte: "Chargement…" }));
-  let candidats = [], productions = [], sources = [];
+  let candidats = [], productions = [], sources = [], alertesVeille = [];
   try {
     const veille = await (await contenu("citations/candidats.json")).json();
     candidats = veille.candidats || [];
     sources = veille.sources || [];
+    alertesVeille = (veille.alertes || []).filter(Boolean);
   } catch (x) { if (x.message === "401") return; }
   try {
     productions = (await (await contenu("citations/index.json")).json()).productions || [];
@@ -839,6 +840,8 @@ async function ecranCitations() {
     entete("Citations", candidats.length ? `${candidats.length} repérée${candidats.length > 1 ? "s" : ""} · 4 derniers jours` : "Veille des déclarations", { retour: true }),
     suivi,
     bandeauSources(sources),
+    alertesVeille.length ? el("div", { class: "carte alerte-orange" },
+      alertesVeille.map((a) => el("p", { texte: a }))) : null,
     productions.length ? el("section", { class: "section" }, el("h2", { texte: "Prêtes à publier" }),
       el("div", { class: "liste" }, productions.map((p) => el("button", {
         class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(cheminProduction(p))}`),
