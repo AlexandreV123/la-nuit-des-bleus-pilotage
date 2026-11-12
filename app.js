@@ -694,7 +694,11 @@ function formatPour(choisies) {
   return new Set(choisies.map((c) => c.espn_id)).size === 1 ? "joueur" : "mix";
 }
 
-const quandCourt = (iso) => new Date(iso).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+/** « 12 novembre à 14:36 » : le format de date unique des citations, sans jour de la semaine. */
+const quandCourt = (iso) => {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })} à ${heureCourte(iso)}`;
+};
 
 function carteCandidat(c, majBarre) {
   const coche = el("input", { type: "checkbox", id: `c-${c.id}` });
