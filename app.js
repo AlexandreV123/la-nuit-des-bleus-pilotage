@@ -12,7 +12,8 @@
 const API = "https://api.github.com";
 const WORKFLOW = "matin.yml";
 const REGLAGES = "reglages.yml";
-const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie" };
+const CITATIONS = "citations.yml";
+const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation" };
 const $app = document.getElementById("app");
 
 const etat = {
@@ -224,6 +225,7 @@ function carteEtat(index) {
 
 async function ecranListe() {
   const boutons = el("div", { class: "boutons-tete" },
+    el("button", { class: "icone texte", "aria-label": "Citations", onclick: () => (location.hash = "#/citations") }, "Citations"),
     el("button", { class: "icone texte", "aria-label": "Les Bleus", onclick: () => (location.hash = "#/bleus") }, "Bleus"),
     el("button", { class: "icone", "aria-label": "Réglages", onclick: () => (location.hash = "#/relancer") }, "⚙"));
   const tete = entete("La nuit des Bleus", "Pilotage", { droite: boutons });
@@ -259,7 +261,7 @@ async function ecranListe() {
  * Chaque image peut être retirée ou déplacée ; l'ordre de départ est celui du matin. */
 
 const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations" };
-const pubDe = (im) => im.publication || "carrousel";
+const pubDe = (im) => im.publication || etat.fiche?.publication || "carrousel";
 const nomPublication = (pub) => NOMS_PUBLICATION[pub] || pub;
 const image = (fichier) => etat.fiche.images.find((im) => im.fichier === fichier);
 
@@ -288,7 +290,7 @@ function cleLegende(pub) {
   for (const c of f.choix) {
     if (pubDuChoix(c) === pub && etat.choix[c.id] && c.legende && f.legendes[c.legende]) return c.legende;
   }
-  return pub === "carrousel" ? "base" : pub;
+  return pub === "carrousel" || !f.legendes[pub] ? "base" : pub;
 }
 
 /** La légende brute du matin pour la combinaison de choix et le ton retenus. */
@@ -535,10 +537,12 @@ async function ecranNuit(nuit) {
     fiche = await (await contenu(`${nuit}/manifeste.json`)).json();
   } catch (x) {
     if (x.message === "401") return;
-    afficher(tete, el("div", { class: "carte alerte" }, el("p", { texte: `Nuit introuvable : ${x.message}` })));
+    afficher(entete("Introuvable", null, { retour: true }),
+      el("div", { class: "carte alerte" }, el("p", { texte: `Contenu introuvable : ${x.message}` })));
     return;
   }
   Object.values(etat.urls).forEach((u) => URL.revokeObjectURL(u));
+  fiche.nuit = fiche.nuit || nuit;                  // une production n'a pas de date de nuit
   etat.fiche = fiche; etat.fichiers = {}; etat.urls = {}; etat.legendeModifiee = {};
   etat.choix = Object.fromEntries(fiche.choix.map((c) => [c.id, c.defaut !== false]));
   etat.retirees = new Set(); etat.ton = {}; etat.tagsRetires = {};
@@ -549,7 +553,8 @@ async function ecranNuit(nuit) {
   }
 
   afficher(
-    entete(fiche.date_fr || fiche.nuit, resumeTexte(fiche.resume), { retour: true }),
+    entete(fiche.date_fr || fiche.titre || fiche.nuit,
+           resumeTexte(fiche.resume) || FORMATS[fiche.format] || "", { retour: true }),
     fiche.alertes.length
       ? el("div", { class: "carte alerte" }, el("p", { texte: "À vérifier avant de publier :" }),
           fiche.alertes.map((a) => el("p", { texte: `• ${a}` })))
@@ -613,6 +618,146 @@ async function ecranBleus() {
     el("p", { class: "aide note", texte: f.note }));
   // hauteurs des mini-barres posées après coup : la politique de sécurité interdit les styles en ligne
   document.querySelectorAll(".mini i[data-h]").forEach((i) => { i.style.height = `${i.dataset.h}px`; });
+}
+
+/* --- citations : la veille propose, on choisit, GitHub met en forme --- */
+
+const FORMATS = { statement: "Citation seule", joueur: "Carrousel même joueur", mix: "Carrousel plusieurs Français" };
+/** Le dossier d'une production, depuis la racine de la branche (l'index le note sans « citations/ »). */
+const cheminProduction = (p) => (p.dossier.startsWith("citations/") ? p.dossier : `citations/${p.dossier}`);
+
+/** Même règle que le moteur : 1 citation, un seul joueur, ou plusieurs Français. */
+function formatPour(choisies) {
+  if (!choisies.length) return null;
+  if (choisies.length === 1) return "statement";
+  return new Set(choisies.map((c) => c.espn_id)).size === 1 ? "joueur" : "mix";
+}
+
+const quandCourt = (iso) => new Date(iso).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+function carteCandidat(c, majBarre) {
+  const coche = el("input", { type: "checkbox", id: `c-${c.id}` });
+  coche.checked = etat.citSel.has(c.id);
+  coche.addEventListener("change", () => {
+    if (coche.checked) etat.citSel.add(c.id); else etat.citSel.delete(c.id);
+    carte.classList.toggle("choisie", coche.checked);
+    majBarre();
+  });
+  const qui = c.relation && c.relation !== "de" ? `${c.orateur} · ${c.relation}` : c.orateur;
+  const carte = el("div", { class: `carte citation${coche.checked ? " choisie" : ""}` },
+    el("label", { for: `c-${c.id}`, class: "cit-tete" }, coche,
+      el("span", { class: "cit-texte", texte: `« ${c.citation} »` })),
+    el("p", { class: "cit-qui", texte: qui }),
+    c.match?.contexte_fr ? el("p", { class: "aide", texte: c.match.contexte_fr }) : null,
+    el("div", { class: "pastilles" },
+      el("span", { class: `pastille${c.suggestion === "garder" ? " fluo" : ""}`,
+                   texte: c.suggestion === "garder" ? "Suggestion : garder" : "Suggestion : retirer" }),
+      c.deja_produite ? el("span", { class: "pastille", texte: "déjà produite" }) : null,
+      c.langue && c.langue !== "fr" ? el("span", { class: "pastille", texte: `en ${c.langue}` }) : null),
+    c.raison ? el("p", { class: "aide", texte: c.raison }) : null,
+    (c.a_verifier || []).length ? el("p", { class: "erreur", texte: `À vérifier : ${c.a_verifier.join(" · ")}` }) : null,
+    el("details", {}, el("summary", { texte: "Lire le passage" }),
+      c.question ? el("p", { class: "aide", texte: `Question : ${c.question}` }) : null,
+      el("p", { class: "cit-contexte", texte: c.contexte || c.complete || c.citation }),
+      el("p", { class: "aide" }, `${(c.sources || []).join(", ")}${c.publiee ? ` · ${quandCourt(c.publiee)}` : ""} · `,
+        el("a", { href: c.lien, target: "_blank", rel: "noopener noreferrer" }, "l'article"))));
+  return carte;
+}
+
+async function suivreGeneration(zone) {
+  const g = lireJSON(CLES.generation, null);
+  if (!g) { zone.replaceChildren(); return; }
+  if (Date.now() - g.depuis > 20 * 60e3) {
+    garder(CLES.generation, null);
+    zone.replaceChildren(el("div", { class: "carte alerte" },
+      el("p", { texte: "La génération n'a rien donné après 20 minutes : regarde les derniers lancements dans ⚙." })));
+    return;
+  }
+  zone.replaceChildren(el("div", { class: "carte etat" },
+    el("div", { class: "etat-tete" }, el("span", { class: "voyant encours" }), el("strong", { texte: "Mise en forme en cours…" })),
+    el("p", { class: "aide", texte: `${FORMATS[g.format]} · lancée à ${heureCourte(new Date(g.depuis).toISOString())}. Compte 3 à 5 minutes.` })));
+  try {
+    const index = await (await contenu("citations/index.json")).json();
+    const voulue = [...g.ids].sort().join(",");
+    const prete = (index.productions || []).find((p) => [...(p.ids || [])].sort().join(",") === voulue
+      && new Date(p.genere_le).getTime() >= g.depuis - 120e3);
+    if (prete) {
+      garder(CLES.generation, null);
+      toast("C'est prêt !");
+      location.hash = `#/production/${encodeURIComponent(cheminProduction(prete))}`;
+    }
+  } catch (x) { /* index pas encore créé : on réessaiera */ }
+}
+
+async function ecranCitations() {
+  const tete = entete("Citations", "Chargement…", { retour: true });
+  afficher(tete, el("p", { class: "aide", texte: "Chargement…" }));
+  let candidats = [], productions = [];
+  try {
+    candidats = (await (await contenu("citations/candidats.json")).json()).candidats || [];
+  } catch (x) { if (x.message === "401") return; }
+  try {
+    productions = (await (await contenu("citations/index.json")).json()).productions || [];
+  } catch (x) { if (x.message === "401") return; }
+  etat.citSel ||= new Set();
+  const connus = new Set(candidats.map((c) => c.id));
+  etat.citSel.forEach((id) => { if (!connus.has(id)) etat.citSel.delete(id); });
+
+  const suivi = el("div", {});
+  const bouton = el("button", { class: "btn principal", disabled: true });
+  const majBarre = () => {
+    const choisies = candidats.filter((c) => etat.citSel.has(c.id));
+    const fmt = formatPour(choisies);
+    bouton.disabled = !fmt || Boolean(lireJSON(CLES.generation, null));
+    bouton.textContent = fmt ? `Générer · ${FORMATS[fmt]} (${choisies.length})` : "Coche une ou plusieurs citations";
+  };
+  bouton.addEventListener("click", async () => {
+    const choisies = candidats.filter((c) => etat.citSel.has(c.id));
+    const fmt = formatPour(choisies);
+    if (!fmt) return;
+    bouton.disabled = true;
+    try {
+      await gh(`/repos/${etat.depot}/actions/workflows/${CITATIONS}/dispatches`, {
+        methode: "POST", corps: { ref: "main", inputs: { mode: "generer", ids: choisies.map((c) => c.id).join(",") } } });
+      garder(CLES.generation, JSON.stringify({ ids: choisies.map((c) => c.id), format: fmt, depuis: Date.now() }));
+      etat.citSel.clear();
+      ecranCitations();
+    } catch (x) {
+      if (x.message !== "401") toast(`Lancement refusé : ${x.message}`);
+      majBarre();
+    }
+  });
+
+  // groupées par joueur, les plus récentes d'abord (l'ordre du fichier)
+  const groupes = new Map();
+  for (const c of candidats) {
+    if (!groupes.has(c.joueur)) groupes.set(c.joueur, []);
+    groupes.get(c.joueur).push(c);
+  }
+
+  afficher(
+    entete("Citations", candidats.length ? `${candidats.length} repérée${candidats.length > 1 ? "s" : ""} · 4 derniers jours` : "Veille des déclarations", { retour: true }),
+    suivi,
+    productions.length ? el("section", { class: "section" }, el("h2", { texte: "Prêtes à publier" }),
+      el("div", { class: "liste" }, productions.map((p) => el("button", {
+        class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(cheminProduction(p))}`),
+      },
+        el("span", { class: "date", texte: p.titre || FORMATS[p.format] }),
+        el("span", { class: "meta", texte: `${FORMATS[p.format] || p.format} · ${quandCourt(p.genere_le)}` }),
+        el("span", { class: "pastilles" },
+          estPubliee(cheminProduction(p), "citations") ? el("span", { class: "pastille fluo", texte: "Publiée ✓" }) : null,
+          el("span", { class: "pastille", texte: `${p.images} image${p.images > 1 ? "s" : ""}` }),
+          p.alertes ? el("span", { class: "pastille rouge", texte: "à vérifier" }) : null))))) : null,
+    el("section", { class: "section" }, el("h2", { texte: "Citations repérées" }),
+      candidats.length
+        ? [...groupes.entries()].map(([joueur, liste]) => el("div", { class: "groupe" },
+            el("h3", { class: "groupe-titre", texte: joueur }),
+            el("div", { class: "liste" }, liste.map((c) => carteCandidat(c, majBarre)))))
+        : el("p", { class: "aide", texte: "Rien de neuf pour l'instant. La veille passe vers 8h, 14h et 20h." })),
+    el("div", { class: "barre" }, bouton));
+  majBarre();
+  suivreGeneration(suivi);
+  etat.minuterie = setInterval(() => { suivreGeneration(suivi); majBarre(); }, 15000);
 }
 
 /* --- notifications --- */
@@ -740,6 +885,8 @@ function router() {
   if (route.startsWith("nuit/")) ecranNuit(route.slice(5));
   else if (route === "relancer") ecranRelancer();
   else if (route === "bleus") ecranBleus();
+  else if (route === "citations") ecranCitations();
+  else if (route.startsWith("production/")) ecranNuit(decodeURIComponent(route.slice(11)));
   else ecranListe();
 }
 
