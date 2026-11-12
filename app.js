@@ -11,6 +11,7 @@
 
 const API = "https://api.github.com";
 const WORKFLOW = "matin.yml";
+const REGLAGES = "reglages.yml";
 const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie" };
 const $app = document.getElementById("app");
 
@@ -222,8 +223,8 @@ function carteEtat(index) {
 }
 
 async function ecranListe() {
-  const relancer = el("button", { class: "icone", "aria-label": "Relancer une nuit",
-                                  onclick: () => (location.hash = "#/relancer") }, "↻");
+  const relancer = el("button", { class: "icone", "aria-label": "Réglages",
+                                  onclick: () => (location.hash = "#/relancer") }, "⚙");
   const tete = entete("La nuit des Bleus", "Pilotage", { droite: relancer });
   afficher(tete, el("p", { class: "aide", texte: "Chargement…" }));
   let index;
@@ -562,6 +563,67 @@ async function ecranNuit(nuit) {
   chargerImages(nuit);
 }
 
+/* --- notifications --- */
+
+function octetsDepuisB64(b64) {
+  const brut = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(brut, (c) => c.charCodeAt(0));
+}
+
+function sectionNotifications() {
+  const statut = el("p", { class: "aide" });
+  const bouton = el("button", { class: "btn" });
+  const possible = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const majStatut = async () => {
+    if (!possible) {
+      statut.textContent = "Ce navigateur ne gère pas les notifications. Installe l'appli depuis Chrome.";
+      bouton.classList.add("cache"); return;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    const abo = await reg.pushManager.getSubscription();
+    if (Notification.permission === "denied") {
+      statut.textContent = "Notifications bloquées : autorise-les dans les réglages Android de l'appli.";
+      bouton.classList.add("cache");
+    } else if (abo) {
+      statut.textContent = "Ce téléphone est prévenu chaque matin quand la nuit est prête.";
+      bouton.textContent = "Envoyer une notification d'essai";
+      bouton.onclick = () => lancerReglage({ action: "tester" }, "Essai envoyé : la notification arrive dans une minute environ.");
+    } else {
+      statut.textContent = "Être prévenu chaque matin quand la nuit est prête.";
+      bouton.textContent = "Activer les notifications";
+      bouton.onclick = activer;
+    }
+  };
+  const activer = async () => {
+    bouton.disabled = true;
+    try {
+      const reglage = await (await contenu("reglages/notifications.json")).json().catch(() => null);
+      if (!reglage?.cle_publique) throw new Error("les notifications ne sont pas encore configurées côté GitHub");
+      if (await Notification.requestPermission() !== "granted") throw new Error("autorisation refusée");
+      const reg = await navigator.serviceWorker.ready;
+      const abo = await reg.pushManager.subscribe({ userVisibleOnly: true,
+        applicationServerKey: octetsDepuisB64(reglage.cle_publique) });
+      await lancerReglage({ action: "abonner", abonnement: JSON.stringify(abo) },
+        "C'est activé : une notification d'essai arrive dans une minute environ.");
+    } catch (x) {
+      if (x.message !== "401") toast(x.message.startsWith("GitHub") ? "Configuration introuvable sur GitHub." : `Impossible : ${x.message}`);
+    } finally { bouton.disabled = false; majStatut(); }
+  };
+  majStatut();
+  return el("section", { class: "section" }, el("h2", { texte: "Notifications" }),
+    el("div", { class: "carte liste" }, statut, bouton));
+}
+
+async function lancerReglage(inputs, message) {
+  try {
+    await gh(`/repos/${etat.depot}/actions/workflows/${REGLAGES}/dispatches`,
+             { methode: "POST", corps: { ref: "main", inputs } });
+    toast(message);
+  } catch (x) {
+    if (x.message !== "401") toast(`Refusé par GitHub : ${x.message}`);
+  }
+}
+
 /* --- relancer --- */
 
 const STATUTS = { queued: "en attente", in_progress: "en cours", completed: "terminé", waiting: "en attente" };
@@ -603,12 +665,13 @@ function ecranRelancer() {
   } }, "Lancer");
 
   afficher(
-    entete("Relancer", "Refaire une nuit", { retour: true }),
+    entete("Réglages", "Relancer, notifications", { retour: true }),
     el("div", { class: "carte liste" },
       el("div", { class: "champ" }, el("label", { for: "date", texte: "Nuit NBA (heure de New York)" }), date),
       el("label", { class: "aide", for: "mail" }, mail, " Envoyer aussi le mail"),
       bouton),
     el("section", { class: "section" }, el("h2", { texte: "Derniers lancements" }), el("div", { class: "carte" }, historique)),
+    sectionNotifications(),
     el("section", { class: "section" },
       el("button", { class: "btn", onclick: () => { if (confirm("Oublier le code d'accès sur ce téléphone ?")) deconnecter(); } },
         "Se déconnecter")));
