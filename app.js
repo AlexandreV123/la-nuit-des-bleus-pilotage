@@ -248,7 +248,19 @@ async function ecranListe() {
       el("span", { class: "pastille", texte: `${n.images} images` }),
       n.choix ? el("span", { class: "pastille", texte: n.choix > 1 ? `${n.choix} choix` : "1 choix" }) : null,
       n.alertes ? el("span", { class: "pastille rouge", texte: "à vérifier" }) : null)));
+  let recaps = [];
+  try { recaps = (await (await contenu("recaps/index.json")).json()).recaps || []; }
+  catch (x) { if (x.message === "401") return; }
   afficher(tete, carteEtat(index),
+    recaps.length ? el("section", { class: "section" }, el("h2", { texte: "La semaine des Bleus" }),
+      el("div", { class: "liste" }, recaps.slice(0, 2).map((r) => el("button", {
+        class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(r.dossier)}`),
+      },
+        el("span", { class: "date", texte: r.titre.replace("La semaine des Bleus · ", "Semaine ") }),
+        el("span", { class: "pastilles" },
+          estPubliee(r.dossier, "recap") ? el("span", { class: "pastille fluo", texte: "Publié ✓" }) : null,
+          el("span", { class: "pastille", texte: `${r.images} images` }),
+          r.alertes ? el("span", { class: "pastille rouge", texte: "à vérifier" }) : null))))) : null,
     el("section", { class: "section" }, el("h2", { texte: "Les nuits" }),
       el("div", { class: "liste" },
         cartes.length ? cartes : el("p", { class: "aide", texte: "Aucune nuit publiée pour l'instant." }))));
@@ -260,7 +272,7 @@ async function ecranListe() {
  * Chaque publication a son aperçu, sa légende et son bouton « Publier ».
  * Chaque image peut être retirée ou déplacée ; l'ordre de départ est celui du matin. */
 
-const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations" };
+const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations", recap: "Le récap" };
 const pubDe = (im) => im.publication || etat.fiche?.publication || "carrousel";
 const nomPublication = (pub) => NOMS_PUBLICATION[pub] || pub;
 const image = (fichier) => etat.fiche.images.find((im) => im.fichier === fichier);
