@@ -248,8 +248,10 @@ async function ecranListe() {
       el("span", { class: "pastille", texte: `${n.images} images` }),
       n.choix ? el("span", { class: "pastille", texte: n.choix > 1 ? `${n.choix} choix` : "1 choix" }) : null,
       n.alertes ? el("span", { class: "pastille rouge", texte: "à vérifier" }) : null)));
-  let recaps = [];
+  let recaps = [], ladders = [];
   try { recaps = (await (await contenu("recaps/index.json")).json()).recaps || []; }
+  catch (x) { if (x.message === "401") return; }
+  try { ladders = (await (await contenu("ladders/index.json")).json()).editions || []; }
   catch (x) { if (x.message === "401") return; }
   afficher(tete, carteEtat(index),
     recaps.length ? el("section", { class: "section" }, el("h2", { texte: "La semaine des Bleus" }),
@@ -261,6 +263,7 @@ async function ecranListe() {
           estPubliee(r.dossier, "recap") ? el("span", { class: "pastille fluo", texte: "Publié ✓" }) : null,
           el("span", { class: "pastille", texte: `${r.images} images` }),
           r.alertes ? el("span", { class: "pastille rouge", texte: "à vérifier" }) : null))))) : null,
+    ladders.length ? sectionClassements(ladders) : null,
     el("section", { class: "section" }, el("h2", { texte: "Les nuits" }),
       el("div", { class: "liste" },
         cartes.length ? cartes : el("p", { class: "aide", texte: "Aucune nuit publiée pour l'instant." }))));
@@ -272,7 +275,38 @@ async function ecranListe() {
  * Chaque publication a son aperçu, sa légende et son bouton « Publier ».
  * Chaque image peut être retirée ou déplacée ; l'ordre de départ est celui du matin. */
 
-const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations", recap: "Le récap" };
+const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations", recap: "Le récap",
+                           ladders: "Le classement" };
+const rangFr = (n) => (Number(n) === 1 ? "1er" : `${n}e`);
+
+/** « Wembanyama 2e · Sarr 9e », ou rien si aucun Français n'est classé. */
+function francaisClasses(liste) {
+  const famille = (nom) => nom.split(" ").slice(1).join(" ") || nom;
+  return (liste || []).map((f) => `${famille(f.nom)} ${rangFr(f.rang)}`).join(" · ");
+}
+
+/* --- les classements NBA.com (MVP Ladder, Rookie Ladder) ---
+ * Chaque édition est produite ; on en publie une sur deux, ou on attend la suivante. */
+function sectionClassements(editions) {
+  // l'index note le dossier sans « ladders/ », comme celui des citations
+  const chemin = (e) => (e.dossier.startsWith("ladders/") ? e.dossier : `ladders/${e.dossier}`);
+  const tous = el("div", { class: "liste cache" });
+  const carte = (e) => el("button", {
+    class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(chemin(e))}`),
+  },
+    el("span", { class: "date", texte: e.titre }),
+    el("span", { class: "meta", texte: francaisClasses(e.francais) || "Aucun Français classé" }),
+    el("span", { class: "pastilles" },
+      estPubliee(chemin(e), "ladders") ? el("span", { class: "pastille orange", texte: "Publié ✓" }) : null));
+  editions.slice(4).forEach((e) => tous.append(carte(e)));
+  return el("section", { class: "section" }, el("h2", { texte: "Les classements" }),
+    el("div", { class: "liste" }, editions.slice(0, 4).map(carte)),
+    editions.length > 4 ? el("button", { class: "lien", onclick: (ev) => {
+      tous.classList.toggle("cache");
+      ev.currentTarget.textContent = tous.classList.contains("cache") ? "Éditions précédentes" : "Masquer";
+    } }, "Éditions précédentes") : null,
+    tous);
+}
 const pubDe = (im) => im.publication || etat.fiche?.publication || "carrousel";
 const nomPublication = (pub) => NOMS_PUBLICATION[pub] || pub;
 const image = (fichier) => etat.fiche.images.find((im) => im.fichier === fichier);
@@ -566,7 +600,14 @@ async function ecranNuit(nuit) {
 
   afficher(
     entete(fiche.date_fr || fiche.titre || fiche.nuit,
-           resumeTexte(fiche.resume) || FORMATS[fiche.format] || "", { retour: true }),
+           resumeTexte(fiche.resume)
+             || (fiche.publication === "ladders" ? francaisClasses(fiche.francais) || "Aucun Français classé" : "")
+             || FORMATS[fiche.format] || "", { retour: true }),
+    fiche.source
+      ? el("p", { class: "aide" }, "Source : ",
+          el("a", { href: fiche.source, target: "_blank", rel: "noopener noreferrer", texte: "NBA.com" }),
+          " — publier une édition sur deux suffit.")
+      : null,
     fiche.alertes.length
       ? el("div", { class: "carte alerte" }, el("p", { texte: "À vérifier avant de publier :" }),
           fiche.alertes.map((a) => el("p", { texte: `• ${a}` })))

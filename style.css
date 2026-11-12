@@ -64,6 +64,8 @@ button{cursor:pointer;border:0;background:none}
   padding:5px 10px;border-radius:999px;background:var(--carte2);color:var(--gris)}
 .pastille.fluo{background:rgba(215,255,62,.14);color:var(--fluo)}
 .pastille.rouge{background:rgba(255,90,90,.14);color:var(--rouge)}
+/* les posts ponctuels (classements NBA.com) ont l'orange du compte */
+.pastille.orange{background:rgba(255,138,31,.16);color:#FF8A1F}
 
 /* sections d'une nuit */
 .section{margin-top:22px}
