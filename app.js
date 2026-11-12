@@ -16,7 +16,7 @@ const $app = document.getElementById("app");
 
 const etat = {
   jeton: lire(CLES.jeton), depot: lire(CLES.depot),
-  fiche: null, fichiers: {}, urls: {}, choix: {}, legendeModifiee: false, minuterie: null,
+  fiche: null, fichiers: {}, urls: {}, choix: {}, legendeModifiee: {}, minuterie: null,
 };
 
 /* ------------------------------------------------------------------ outils */
@@ -42,7 +42,11 @@ function el(tag, attrs = {}, ...enfants) {
   return n;
 }
 
-function afficher(...noeuds) { $app.replaceChildren(...noeuds); window.scrollTo(0, 0); }
+function afficher(...noeuds) {
+  // listes aplaties, blocs absents (null) ignorés : sinon ils s'afficheraient en texte
+  $app.replaceChildren(...noeuds.flat(Infinity).filter((n) => n != null && n !== false));
+  window.scrollTo(0, 0);
+}
 
 function toast(message) {
   const t = document.getElementById("toast");
@@ -170,18 +174,37 @@ async function ecranListe() {
     cartes.length ? cartes : el("p", { class: "aide", texte: "Aucune nuit publiée pour l'instant." })));
 }
 
-/* --- une nuit --- */
+/* --- une nuit ---
+ * Une nuit peut contenir plusieurs publications : le carrousel du matin, et des
+ * posts à part (citations…), repérés par la clé « publication » de chaque image.
+ * Chaque publication a son aperçu, sa légende et son bouton « Publier ». */
 
-function selection() {
-  return etat.fiche.images.filter((im) => !(im.facultative && im.choix && etat.choix[im.choix] === false));
+const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations" };
+const pubDe = (im) => im.publication || "carrousel";
+const nomPublication = (pub) => NOMS_PUBLICATION[pub] || pub;
+
+function publications() {
+  return [...new Set(etat.fiche.images.map(pubDe))];
 }
 
-function legendeCourante() {
+function selection(pub) {
+  return etat.fiche.images.filter((im) => pubDe(im) === pub
+    && !(im.facultative && im.choix && etat.choix[im.choix] === false));
+}
+
+function pubDuChoix(c) {
+  const im = etat.fiche.images.find((i) => i.choix === c.id);
+  return im ? pubDe(im) : "carrousel";
+}
+
+function legendeCourante(pub) {
   const f = etat.fiche;
   for (const c of f.choix) {
-    if (etat.choix[c.id] && c.legende && f.legendes[c.legende]) return f.legendes[c.legende];
+    if (pubDuChoix(c) === pub && etat.choix[c.id] && c.legende && f.legendes[c.legende]) {
+      return f.legendes[c.legende];
+    }
   }
-  return f.legendes.base || "";
+  return (pub === "carrousel" ? f.legendes.base : f.legendes[pub]) || "";
 }
 
 function vignette(im, rang, total) {
@@ -192,12 +215,17 @@ function vignette(im, rang, total) {
 }
 
 function majApercu() {
-  const zone = document.getElementById("apercu");
-  if (!zone) return;
-  const sel = selection();
-  zone.replaceChildren(...sel.map((im, i) => vignette(im, i + 1, sel.length)));
-  const compte = document.getElementById("compte");
-  if (compte) compte.textContent = `Le carrousel · ${sel.length} images`;
+  for (const pub of publications()) {
+    const zone = document.getElementById(`apercu-${pub}`);
+    if (!zone) continue;
+    const sel = selection(pub);
+    zone.replaceChildren(...(sel.length ? sel.map((im, i) => vignette(im, i + 1, sel.length))
+      : [el("p", { class: "aide", texte: "Rien de retenu : rien à publier." })]));
+    document.getElementById(`compte-${pub}`).textContent =
+      `${nomPublication(pub)} · ${sel.length} image${sel.length > 1 ? "s" : ""}`;
+    const bouton = document.getElementById(`publier-${pub}`);
+    if (bouton) bouton.disabled = !sel.length;
+  }
 }
 
 function carteChoix(c) {
@@ -208,16 +236,19 @@ function carteChoix(c) {
     garde.setAttribute("aria-pressed", String(valeur));
     retire.setAttribute("aria-pressed", String(!valeur));
     majApercu();
-    const zone = document.getElementById("legende");
-    if (!etat.legendeModifiee) zone.value = legendeCourante();
-    else toast("Légende modifiée à la main : pensez à la relire.");
+    const pub = pubDuChoix(c);
+    const zone = document.getElementById(`legende-${pub}`);
+    if (zone && !etat.legendeModifiee[pub]) zone.value = legendeCourante(pub);
+    else if (zone) toast("Légende modifiée à la main : pensez à la relire.");
   };
   garde.addEventListener("click", () => basculer(true));
   retire.addEventListener("click", () => basculer(false));
+  const conseil = c.suggestion === "garder" ? "Suggestion : garder." : c.suggestion === "retirer" ? "Suggestion : retirer." : null;
   return el("div", { class: "carte choix" },
     el("div", { class: "titre", texte: c.titre }),
     el("p", { class: "phrase", texte: c.phrase }),
-    c.suggestion === "garder" ? el("p", { class: "aide", texte: "Suggestion : garder." }) : null,
+    conseil ? el("p", { class: "aide", texte: c.raison ? `${conseil} ${c.raison}` : conseil }) : null,
+    c.source ? el("p", { class: "aide", texte: `Source : ${c.source}` }) : null,
     el("div", { class: "bascule", role: "group", "aria-label": c.titre }, garde, retire),
     c.autres && c.autres.length
       ? el("details", {}, el("summary", { texte: "Autres faits repérés cette nuit" }),
@@ -245,14 +276,19 @@ async function chargerImages(nuit) {
   await Promise.all([ouvrier(), ouvrier(), ouvrier()]);
 }
 
-async function publier() {
-  const sel = selection();
-  if (sel.some((im) => !etat.fichiers[im.fichier])) { toast("Images encore en chargement…"); return; }
-  // renumérotées dans l'ordre du carrousel : 01.png, 02.png…
-  const fichiers = sel.map((im, i) => new File([etat.fichiers[im.fichier]],
+/** Les images retenues d'une publication, renumérotées dans l'ordre : 01.png, 02.png… */
+function fichiersDe(pub) {
+  return selection(pub).map((im, i) => new File([etat.fichiers[im.fichier]],
     `${String(i + 1).padStart(2, "0")}.png`, { type: "image/png" }));
+}
+
+async function publier(pub) {
+  const sel = selection(pub);
+  if (!sel.length) return;
+  if (sel.some((im) => !etat.fichiers[im.fichier])) { toast("Images encore en chargement…"); return; }
+  const fichiers = fichiersDe(pub);
   let copiee = false;
-  try { await navigator.clipboard.writeText(document.getElementById("legende").value); copiee = true; } catch { /* refusé */ }
+  try { await navigator.clipboard.writeText(document.getElementById(`legende-${pub}`).value); copiee = true; } catch { /* refusé */ }
   if (navigator.canShare && navigator.canShare({ files: fichiers })) {
     try {
       await navigator.share({ files: fichiers });
@@ -273,6 +309,24 @@ function enregistrer(fichiers) {
   }
 }
 
+function sectionPublication(pub) {
+  const legende = el("textarea", { id: `legende-${pub}`, spellcheck: "true",
+                                   oninput: () => (etat.legendeModifiee[pub] = true) });
+  legende.value = legendeCourante(pub);
+  return el("section", { class: "section" },
+    el("h2", { id: `compte-${pub}` }),
+    el("div", { class: "defile", id: `apercu-${pub}` }),
+    el("h2", { texte: "La légende", class: "sous-titre" }), legende,
+    el("div", { class: "rangee" },
+      el("button", { class: "btn", onclick: async () => {
+        try { await navigator.clipboard.writeText(legende.value); toast("Légende copiée."); }
+        catch { legende.select(); toast("Copie refusée : sélectionnez le texte à la main."); }
+      } }, "Copier la légende"),
+      el("button", { class: "btn", onclick: () => enregistrer(fichiersDe(pub)) }, "Enregistrer")),
+    el("button", { class: "btn principal publier", id: `publier-${pub}`, onclick: () => publier(pub) },
+      publications().length > 1 ? `Publier ${nomPublication(pub).toLowerCase()}` : "Publier sur Instagram"));
+}
+
 async function ecranNuit(nuit) {
   const tete = entete("Chargement…", null, { retour: true });
   afficher(tete, el("p", { class: "aide", texte: "Chargement de la nuit…" }));
@@ -285,12 +339,8 @@ async function ecranNuit(nuit) {
     return;
   }
   Object.values(etat.urls).forEach((u) => URL.revokeObjectURL(u));
-  etat.fiche = fiche; etat.fichiers = {}; etat.urls = {}; etat.legendeModifiee = false;
+  etat.fiche = fiche; etat.fichiers = {}; etat.urls = {}; etat.legendeModifiee = {};
   etat.choix = Object.fromEntries(fiche.choix.map((c) => [c.id, c.defaut !== false]));
-
-  const legende = el("textarea", { id: "legende", spellcheck: "true",
-                                   oninput: () => (etat.legendeModifiee = true) });
-  legende.value = legendeCourante();
 
   afficher(
     entete(fiche.date_fr || fiche.nuit, resumeTexte(fiche.resume), { retour: true }),
@@ -302,18 +352,7 @@ async function ecranNuit(nuit) {
       ? el("section", { class: "section" }, el("h2", { texte: "Tes choix" }),
           el("div", { class: "liste" }, fiche.choix.map(carteChoix)))
       : null,
-    el("section", { class: "section" }, el("h2", { id: "compte" }),
-      el("div", { class: "defile", id: "apercu" })),
-    el("section", { class: "section" }, el("h2", { texte: "La légende" }), legende,
-      el("div", { class: "rangee", style: null },
-        el("button", { class: "btn", onclick: async () => {
-          try { await navigator.clipboard.writeText(legende.value); toast("Légende copiée."); }
-          catch { legende.select(); toast("Copie refusée : sélectionnez le texte à la main."); }
-        } }, "Copier la légende"),
-        el("button", { class: "btn", onclick: () => enregistrer(selection().map((im, i) =>
-          new File([etat.fichiers[im.fichier]], `${String(i + 1).padStart(2, "0")}.png`, { type: "image/png" }))) },
-          "Enregistrer"))),
-    el("div", { class: "barre" }, el("button", { class: "btn principal", onclick: publier }, "Publier sur Instagram")));
+    publications().map(sectionPublication));
   majApercu();
   chargerImages(nuit);
 }

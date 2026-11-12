@@ -1,6 +1,6 @@
 /* Garde l'interface en cache pour qu'elle s'ouvre comme une appli.
  * Rien venant de GitHub (contenus, code d'accès) n'est jamais mis en cache ici. */
-const CACHE = "ndb-pilotage-v1";
+const CACHE = "ndb-pilotage-v2";
 const COQUILLE = ["./", "index.html", "app.js", "style.css", "manifest.webmanifest",
   "icones/icone-192.png", "icones/icone-512.png",
   "polices/Archivo-800.woff2", "polices/Archivo-900.woff2",
