@@ -372,7 +372,7 @@ function sectionMercato(mouvements) {
   if (!vus.length) return null;
   const aVerifier = vus.filter((m) => !m.genere || m.a_regenerer).length;
   return el("section", { class: "section" },
-    el("div", { class: "titre-section" }, el("h2", { texte: "Le mercato" }),
+    el("div", { class: "titre-section mini" }, el("h2", { texte: "Le mercato" }),
       el("button", { class: "lien", onclick: () => (location.hash = "#/mercato") },
         aVerifier ? `${aVerifier} à vérifier →` : "Tout voir →")),
     el("div", { class: "liste" }, vus.slice(0, 3).map(carteMvt)));
@@ -1094,10 +1094,87 @@ async function ecranNuit(nuit) {
       ? el("section", { class: "section" }, el("h2", { texte: "Tes choix" }),
           el("div", { class: "liste" }, fiche.choix.map(carteChoix)))
       : null,
-    publications().map(sectionPublication));
+    publications().map(sectionPublication),
+    (fiche.videos || []).map((v) => sectionVideo(nuit, v)));
   publications().forEach(majMarquePublication);
   majApercu();
   chargerImages(nuit);
+}
+
+/* --- le Reel du matin : la vidéo verticale du carrousel, publiée à part ---
+ * manifeste.json : « videos » = [{fichier, couverture, publication, titre, legende, conseil}].
+ * Même légende que le carrousel ; publication par le partage Android (fichier mp4). */
+function sectionVideo(nuit, v) {
+  const pub = v.publication || "reel";
+  const lecteur = el("video", { class: "reel-video", controls: true, playsinline: true, preload: "metadata" });
+  const etatVideo = el("p", { class: "aide", texte: "Chargement de la vidéo…" });
+  const legende = el("textarea", { id: `legende-${pub}`, spellcheck: "true" });
+  legende.value = etat.fiche.legendes[v.legende || "base"] || legendeCourante("carrousel");
+  let fichier = null;
+  const marque = el("button", { class: "lien-publiee" });
+  const majMarque = () => {
+    const oui = estPubliee(nuit, pub);
+    marque.textContent = oui ? "Publié ✓ · annuler" : "Marquer comme publié";
+    marque.classList.toggle("fait", oui);
+  };
+  marque.addEventListener("click", () => { marquerPubliee(nuit, pub, !estPubliee(nuit, pub)); majMarque(); });
+  majMarque();
+
+  // la vidéo et sa couverture se lisent comme les images : API GitHub, puis adresse locale
+  (async () => {
+    try {
+      const [video, couverture] = await Promise.all([
+        contenu(`${nuit}/${v.fichier}`).then((r) => r.blob()),
+        v.couverture ? contenu(`${nuit}/${v.couverture}`).then((r) => r.blob()).catch(() => null) : null]);
+      if (etat.fiche?.nuit !== nuit) return;                 // on a changé d'écran entre-temps
+      fichier = new File([video], v.fichier.split("/").pop(), { type: "video/mp4" });
+      etat.urls[v.fichier] = URL.createObjectURL(fichier);
+      if (couverture) { etat.urls[v.couverture] = URL.createObjectURL(couverture); lecteur.poster = etat.urls[v.couverture]; }
+      lecteur.src = etat.urls[v.fichier];
+      etatVideo.textContent = `${(video.size / 1e6).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`;
+    } catch (x) {
+      if (x.message !== "401") etatVideo.textContent = `Vidéo introuvable : ${x.message}`;
+    }
+  })();
+
+  const publierVideo = async () => {
+    if (!fichier) { toast("Vidéo encore en chargement…"); return; }
+    let copiee = false;
+    try { await navigator.clipboard.writeText(legende.value); copiee = true; } catch { /* refusé */ }
+    if (navigator.canShare && navigator.canShare({ files: [fichier] })) {
+      try {
+        await navigator.share({ files: [fichier] });
+        marquerPubliee(nuit, pub, true);
+        majMarque();
+        toast(copiee ? "Légende copiée : collez-la dans Instagram." : "Pensez à copier la légende.");
+      } catch (x) {
+        if (x.name !== "AbortError") toast(`Partage impossible : ${x.message}`);
+      }
+    } else {
+      enregistrer([fichier]);
+      toast(copiee ? "Vidéo enregistrée, légende copiée." : "Vidéo enregistrée.");
+    }
+  };
+
+  return el("section", { class: "section" },
+    el("h2", { texte: v.titre || "Le Reel" }),
+    el("div", { class: "reel-cadre" }, lecteur),
+    etatVideo,
+    v.conseil ? el("div", { class: "carte alerte-orange" }, el("p", { texte: `Conseil : ${v.conseil}.` })) : null,
+    el("h2", { texte: "La légende", class: "sous-titre" }),
+    legende,
+    el("div", { class: "rangee" },
+      el("button", { class: "btn", onclick: () => {
+        const zone = document.getElementById("legende-carrousel");
+        legende.value = zone ? zone.value : legendeCourante("carrousel");
+        toast("Légende du carrousel reprise.");
+      } }, "Reprendre celle du carrousel"),
+      el("button", { class: "btn", onclick: async () => {
+        try { await navigator.clipboard.writeText(legende.value); toast("Légende copiée."); }
+        catch { legende.select(); toast("Copie refusée : sélectionnez le texte à la main."); }
+      } }, "Copier la légende")),
+    el("button", { class: "btn principal publier", onclick: publierVideo }, "Publier le Reel"),
+    marque);
 }
 
 /* --- les Bleus : la saison, les records, l'histoire --- */

@@ -258,5 +258,9 @@ details.plus .liste{margin-top:8px}
 .m-colonne{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:12px;border:1px solid var(--bord)}
 .m-etat{margin:4px 0 10px}
 .m-ecarter{display:block;margin:18px auto 90px;color:var(--gris)}
-.titre-section > h2{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--gris);font-weight:700;margin:0}
-.section > .titre-section{margin-bottom:10px}
+.titre-section.mini > h2{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--gris);font-weight:700;margin:0}
+.section > .titre-section.mini{margin-bottom:10px}
+
+/* le Reel du matin : lecteur vertical */
+.reel-cadre{max-width:300px;margin:0 auto 8px}
+.reel-video{display:block;width:100%;aspect-ratio:9/16;border-radius:14px;background:#000;border:1px solid var(--bord)}
