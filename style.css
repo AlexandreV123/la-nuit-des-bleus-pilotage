@@ -210,3 +210,17 @@ b.ok{color:var(--fluo)}
 .alerte-orange{border-color:rgba(255,166,43,.55);background:rgba(255,166,43,.08);margin-bottom:6px;
   display:flex;flex-direction:column;gap:6px}
 .alerte-orange p{font-size:14px;color:#FFC46B;line-height:1.45}
+
+/* citations : date en tête, filtre par joueur, veille lancée à la main */
+.cit-date{font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:var(--gris)}
+.cit-date span{text-transform:none;letter-spacing:0;font-weight:600}
+.filtres{margin-bottom:14px;gap:8px}
+.pastille.filtre{text-transform:none;letter-spacing:0;font-size:13px;background:var(--carte2);color:var(--gris);
+  border:1px solid var(--bord)}
+.pastille.filtre.actif{background:rgba(215,255,62,.14);color:var(--fluo);border-color:rgba(215,255,62,.45)}
+.veille{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px}
+.veille .btn{width:auto;flex:none;padding:10px 14px;font-size:14px}
+.veille .r-titre{margin:0 0 2px}
+details.plus{margin-top:10px}
+details.plus summary{font-size:14px;color:var(--gris);font-weight:600;padding:6px 0}
+details.plus .liste{margin-top:8px}

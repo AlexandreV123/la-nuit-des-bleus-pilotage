@@ -13,7 +13,8 @@ const API = "https://api.github.com";
 const WORKFLOW = "matin.yml";
 const REGLAGES = "reglages.yml";
 const CITATIONS = "citations.yml";
-const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation" };
+const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation",
+               veille: "ndb.veille" };
 const $app = document.getElementById("app");
 
 const etat = {
@@ -773,6 +774,8 @@ function carteCandidat(c, majBarre) {
     : null;
   const qui = c.relation && c.relation !== "de" ? `${c.orateur} · ${c.relation}` : c.orateur;
   const carte = el("div", { class: `carte citation${coche.checked ? " choisie" : ""}` },
+    el("p", { class: "cit-date" }, c.publiee ? quandCourt(c.publiee) : "Date inconnue",
+      (c.sources || []).length ? el("span", { texte: ` · ${c.sources.join(", ")}` }) : null),
     el("label", { for: `c-${c.id}`, class: "cit-tete" }, coche,
       el("span", { class: "cit-texte", texte: `« ${c.citation} »` })),
     el("p", { class: "cit-qui", texte: qui }),
@@ -782,7 +785,7 @@ function carteCandidat(c, majBarre) {
       el("span", { class: `pastille${c.suggestion === "garder" ? " fluo" : ""}`,
                    texte: c.suggestion === "garder" ? "Suggestion : garder" : "Suggestion : retirer" }),
       c.deja_produite ? el("span", { class: "pastille", texte: "déjà produite" }) : null,
-      c.langue && c.langue !== "fr" ? el("span", { class: "pastille", texte: `en ${c.langue}` }) : null),
+      c.langue && c.langue !== "fr" ? el("span", { class: "pastille", texte: c.langue === "en" ? "en anglais" : `en ${c.langue}` }) : null),
     c.raison ? el("p", { class: "aide", texte: c.raison }) : null,
     (c.a_verifier || []).length ? el("p", { class: "erreur", texte: `À vérifier : ${c.a_verifier.join(" · ")}` }) : null,
     lireArticle,
@@ -836,15 +839,89 @@ async function suivreGeneration(zone) {
   } catch (x) { /* index pas encore créé : on réessaiera */ }
 }
 
+/** « Aujourd'hui », « Hier », sinon « 11 novembre » : les intertitres de la liste. */
+function jourCitation(iso) {
+  if (!iso) return "Date inconnue";
+  const jour = fmtJour(new Date(iso));
+  if (jour === fmtJour(new Date())) return "Aujourd'hui";
+  if (jour === fmtJour(new Date(Date.now() - 86400e3))) return "Hier";
+  return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "long", timeZone: "Europe/Paris" });
+}
+
+/** La veille lancée à la main depuis l'appli : on la suit jusqu'à ce que la liste change. */
+async function suivreVeille(zone, recharger) {
+  const v = lireJSON(CLES.veille, null);
+  if (!v) return;
+  if (Date.now() - v.depuis > 15 * 60e3) {
+    garder(CLES.veille, null);
+    zone.replaceChildren(el("div", { class: "carte alerte" },
+      el("p", { texte: "La veille n'a rien donné après 15 minutes : regarde les derniers lancements dans ⚙." })));
+    return;
+  }
+  zone.replaceChildren(el("div", { class: "carte etat" },
+    el("div", { class: "etat-tete" }, el("span", { class: "voyant encours" }), el("strong", { texte: "Veille en cours…" })),
+    el("p", { class: "aide", texte: `Lancée à ${heureCourte(new Date(v.depuis).toISOString())}. Compte 2 à 3 minutes : la liste se mettra à jour toute seule.` })));
+  try {
+    const veille = await (await contenu("citations/candidats.json")).json();
+    if (veille.mis_a_jour && new Date(veille.mis_a_jour).getTime() >= v.depuis - 60e3) {
+      garder(CLES.veille, null);
+      const connues = new Set(v.ids || []);
+      const neuves = (veille.candidats || []).filter((c) => !connues.has(c.id)).length;
+      toast(neuves ? `Veille terminée : ${neuves} nouvelle${neuves > 1 ? "s" : ""} citation${neuves > 1 ? "s" : ""}` : "Veille terminée : rien de nouveau");
+      etat.citJoueur = null;                       // les nouveautés se voient, quel que soit le joueur
+      recharger();
+    }
+  } catch (x) { /* fichier pas encore réécrit : on réessaiera */ }
+}
+
+/** Une production prête à publier (index des citations). */
+function carteProduction(p) {
+  return el("button", {
+    class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(cheminProduction(p))}`),
+  },
+    el("span", { class: "date", texte: p.titre || FORMATS[p.format] }),
+    el("span", { class: "meta", texte: `${FORMATS[p.format] || p.format} · ${quandCourt(p.genere_le)}` }),
+    el("span", { class: "pastilles" },
+      estPubliee(cheminProduction(p), "citations") ? el("span", { class: "pastille fluo", texte: "Publiée ✓" }) : null,
+      el("span", { class: "pastille", texte: `${p.images} image${p.images > 1 ? "s" : ""}` }),
+      p.alertes ? el("span", { class: "pastille rouge", texte: "à vérifier" }) : null));
+}
+
+/** Dernier passage de la veille et bouton pour la relancer à la main. */
+function carteVeille(miseAJour, idsConnus, zoneSuivi, recharger) {
+  const bouton = el("button", { class: "btn" }, "Lancer une veille");
+  bouton.disabled = Boolean(lireJSON(CLES.veille, null));
+  bouton.addEventListener("click", async () => {
+    bouton.disabled = true;
+    try {
+      await gh(`/repos/${etat.depot}/actions/workflows/${CITATIONS}/dispatches`,
+        { methode: "POST", corps: { ref: "main", inputs: { mode: "veille" } } });
+      garder(CLES.veille, JSON.stringify({ depuis: Date.now(), ids: idsConnus }));
+      toast("Veille lancée");
+      suivreVeille(zoneSuivi, recharger);
+    } catch (x) {
+      if (x.message !== "401") toast(`Lancement refusé : ${x.message}`);
+      bouton.disabled = false;
+    }
+  });
+  return el("div", { class: "carte veille" },
+    el("div", {},
+      el("p", { class: "r-titre", texte: "Veille des déclarations" }),
+      el("p", { class: "aide", texte: miseAJour ? `Dernier passage : ${quandCourt(miseAJour)}` : "Pas encore de passage" }),
+      el("p", { class: "aide", texte: "Automatique vers 8h, 14h et 20h." })),
+    bouton);
+}
+
 async function ecranCitations() {
   const tete = entete("Citations", "Chargement…", { retour: true });
   afficher(tete, el("p", { class: "aide", texte: "Chargement…" }));
-  let candidats = [], productions = [], sources = [], alertesVeille = [];
+  let candidats = [], productions = [], sources = [], alertesVeille = [], miseAJour = null;
   try {
     const veille = await (await contenu("citations/candidats.json")).json();
     candidats = veille.candidats || [];
     sources = veille.sources || [];
     alertesVeille = (veille.alertes || []).filter(Boolean);
+    miseAJour = veille.mis_a_jour || null;
   } catch (x) { if (x.message === "401") return; }
   try {
     productions = (await (await contenu("citations/index.json")).json()).productions || [];
@@ -882,39 +959,56 @@ async function ecranCitations() {
     }
   });
 
-  // groupées par joueur, les plus récentes d'abord (l'ordre du fichier)
-  const groupes = new Map();
-  for (const c of candidats) {
-    if (!groupes.has(c.joueur)) groupes.set(c.joueur, []);
-    groupes.get(c.joueur).push(c);
-  }
+  // de la plus récente à la plus ancienne, avec un intertitre par jour ; filtre par joueur au choix
+  candidats.sort((a, b) => (b.publiee || "").localeCompare(a.publiee || ""));
+  const parJoueur = new Map();
+  for (const c of candidats) parJoueur.set(c.joueur, (parJoueur.get(c.joueur) || 0) + 1);
+  if (etat.citJoueur && !parJoueur.has(etat.citJoueur)) etat.citJoueur = null;
+  const zoneListe = el("div", {});
+  const zoneFiltres = el("div", { class: "pastilles filtres" });
+  const rendreListe = () => {
+    zoneFiltres.replaceChildren(
+      el("button", { class: `pastille filtre${etat.citJoueur ? "" : " actif"}`,
+        onclick: () => { etat.citJoueur = null; rendreListe(); } }, `Tous · ${candidats.length}`),
+      ...[...parJoueur.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([j, n]) =>
+        el("button", { class: `pastille filtre${etat.citJoueur === j ? " actif" : ""}`,
+          onclick: () => { etat.citJoueur = etat.citJoueur === j ? null : j; rendreListe(); } }, `${j} · ${n}`)));
+    const visibles = candidats.filter((c) => !etat.citJoueur || c.joueur === etat.citJoueur);
+    const jours = new Map();
+    for (const c of visibles) {
+      const j = jourCitation(c.publiee);
+      if (!jours.has(j)) jours.set(j, []);
+      jours.get(j).push(c);
+    }
+    zoneListe.replaceChildren(...[...jours.entries()].map(([jour, liste]) => el("div", { class: "groupe" },
+      el("h3", { class: "groupe-titre", texte: jour }),
+      el("div", { class: "liste" }, liste.map((c) => carteCandidat(c, majBarre))))));
+  };
+  rendreListe();
 
   afficher(
     entete("Citations", candidats.length ? `${candidats.length} repérée${candidats.length > 1 ? "s" : ""} · 4 derniers jours` : "Veille des déclarations", { retour: true }),
     suivi,
+    carteVeille(miseAJour, candidats.map((c) => c.id), suivi, ecranCitations),
     bandeauSources(sources),
     alertesVeille.length ? el("div", { class: "carte alerte-orange" },
       alertesVeille.map((a) => el("p", { texte: a }))) : null,
     productions.length ? el("section", { class: "section" }, el("h2", { texte: "Prêtes à publier" }),
-      el("div", { class: "liste" }, productions.map((p) => el("button", {
-        class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(cheminProduction(p))}`),
-      },
-        el("span", { class: "date", texte: p.titre || FORMATS[p.format] }),
-        el("span", { class: "meta", texte: `${FORMATS[p.format] || p.format} · ${quandCourt(p.genere_le)}` }),
-        el("span", { class: "pastilles" },
-          estPubliee(cheminProduction(p), "citations") ? el("span", { class: "pastille fluo", texte: "Publiée ✓" }) : null,
-          el("span", { class: "pastille", texte: `${p.images} image${p.images > 1 ? "s" : ""}` }),
-          p.alertes ? el("span", { class: "pastille rouge", texte: "à vérifier" }) : null))))) : null,
+      // les deux dernières en vue, les autres repliées : les citations restent à portée de pouce
+      el("div", { class: "liste" }, productions.slice(0, 2).map(carteProduction)),
+      productions.length > 2 ? el("details", { class: "plus" },
+        el("summary", { texte: `${productions.length - 2} production${productions.length > 3 ? "s" : ""} plus ancienne${productions.length > 3 ? "s" : ""}` }),
+        el("div", { class: "liste" }, productions.slice(2).map(carteProduction))) : null) : null,
     el("section", { class: "section" }, el("h2", { texte: "Citations repérées" }),
       candidats.length
-        ? [...groupes.entries()].map(([joueur, liste]) => el("div", { class: "groupe" },
-            el("h3", { class: "groupe-titre", texte: joueur }),
-            el("div", { class: "liste" }, liste.map((c) => carteCandidat(c, majBarre)))))
-        : el("p", { class: "aide", texte: "Rien de neuf pour l'instant. La veille passe vers 8h, 14h et 20h." })),
+        ? [parJoueur.size > 1 ? zoneFiltres : null, zoneListe]
+        : el("p", { class: "aide", texte: "Rien de neuf pour l'instant. La veille passe vers 8h, 14h et 20h, ou lance-la ci-dessus." })),
     el("div", { class: "barre" }, bouton));
   majBarre();
-  suivreGeneration(suivi);
-  etat.minuterie = setInterval(() => { suivreGeneration(suivi); majBarre(); }, 15000);
+  // une seule zone de suivi : la génération en cours d'abord, sinon la veille lancée à la main
+  const suivre = () => (lireJSON(CLES.generation, null) ? suivreGeneration(suivi) : suivreVeille(suivi, ecranCitations));
+  suivre();
+  etat.minuterie = setInterval(() => { suivre(); majBarre(); }, 15000);
 }
 
 /* --- notifications --- */
