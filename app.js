@@ -15,7 +15,7 @@ const REGLAGES = "reglages.yml";
 const CITATIONS = "citations.yml";
 const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation",
                veille: "ndb.veille", mercatoGen: "ndb.mercatoGen", mercatoVeille: "ndb.mercatoVeille",
-               mercatoEcartes: "ndb.mercatoEcartes" };
+               mercatoEcartes: "ndb.mercatoEcartes", supprimes: "ndb.supprimes" };
 const $app = document.getElementById("app");
 
 const etat = {
@@ -368,7 +368,7 @@ function carteMvt(m) {
 /** Accueil : les trois derniers mouvements, le reste dans le volet Mercato. */
 function sectionMercato(mouvements) {
   const e = ecartes();
-  const vus = mouvements.filter((m) => !e[m.cle]);
+  const vus = mouvements.filter((m) => !e[m.cle] && !estSupprime(m.dossier));
   if (!vus.length) return null;
   const aVerifier = vus.filter((m) => !m.genere || m.a_regenerer).length;
   return el("section", { class: "section" },
@@ -463,7 +463,7 @@ async function ecranMercato() {
   let index = { mouvements: [] };
   try { index = await (await contenu("mercato/index.json")).json(); }
   catch (x) { if (x.message === "401") return; }
-  const mouvements = index.mouvements || [];
+  const mouvements = (index.mouvements || []).filter((m) => !estSupprime(m.dossier));
   const e = ecartes();
   const actifs = mouvements.filter((m) => !e[m.cle]);
   const aVerifier = actifs.filter((m) => !m.genere || m.a_regenerer);
@@ -670,6 +670,11 @@ function formulaireMvt(m, rendre) {
   blocs.push(el("section", { class: "section carte m-bloc" }, equipes));
 
   if (m.type === "trade") {
+    // ce qui part avec le Français (un autre joueur, un choix de draft…) vers sa nouvelle équipe
+    blocs.push(el("section", { class: "section carte m-bloc" },
+      el("label", { class: "r-titre", texte: `Part avec lui${m.vers ? ` chez les ${EQUIPES_NBA[m.vers]}` : ""}` }),
+      el("p", { class: "aide", texte: "Facultatif : un autre joueur, un choix de draft… envoyé dans le même échange." }),
+      editeurElements(m.accompagnants ||= [], rendre)));
     const inconnues = el("input", { type: "checkbox" });
     inconnues.checked = m.contreparties == null;
     inconnues.addEventListener("change", () => {
@@ -773,12 +778,43 @@ async function ecranMouvement(cle) {
     entree?.genere ? el("button", { class: "btn", onclick: () => (location.hash = `#/production/${encodeURIComponent(entree.dossier)}`) },
       "Voir la slide et la légende") : null,
     zone,
-    nouveau ? null : el("button", { class: "lien m-ecarter", onclick: () => {
-      ecarter(cle, !estEcarte); toast(estEcarte ? "Remis dans la liste" : "Écarté de la liste"); history.back(); } },
-      estEcarte ? "Remettre ce mouvement dans la liste" : "Écarter ce mouvement (fausse piste, sans intérêt…)"),
+    nouveau ? null : el("div", { class: "m-fin" },
+      el("button", { class: "lien m-ecarter", onclick: () => {
+        ecarter(cle, !estEcarte); toast(estEcarte ? "Remis dans la liste" : "Écarté de la liste"); history.back(); } },
+        estEcarte ? "Remettre ce mouvement dans la liste" : "Écarter ce mouvement (le garder hors de la liste)"),
+      el("button", { class: "lien m-supprimer", onclick: () => supprimerProduction(`mercato/${cle}`,
+        `le mouvement « ${entree?.titre || cle} », sa fiche et sa slide`) }, "Supprimer ce mouvement")),
     el("div", { class: "barre" }, bouton));
   suivreGenerationMercato(suivi);
   etat.minuterie = setInterval(() => { suivreGenerationMercato(suivi); majBouton(); }, 15000);
+}
+
+/* --- supprimer une production (essais, doublons) : mercato ou citations ---
+ * Le workflow supprimer.yml efface le dossier de la branche « contenus ». En attendant
+ * qu'il passe (une minute), la production est masquée ici. */
+const SUPPRIMER = "supprimer.yml";
+
+function supprimes() {
+  const s = lireJSON(CLES.supprimes, {});
+  const hier = Date.now() - 86400e3;                     // au-delà d'un jour, l'index a suivi
+  for (const [k, t] of Object.entries(s)) if (t < hier) delete s[k];
+  return s;
+}
+const estSupprime = (chemin) => Boolean(supprimes()[chemin.replace(/^\/+/, "")]);
+
+async function supprimerProduction(chemin, quoi) {
+  if (!confirm(`Supprimer ${quoi} ?\n\nC'est définitif.`)) return;
+  try {
+    await gh(`/repos/${etat.depot}/actions/workflows/${SUPPRIMER}/dispatches`,
+      { methode: "POST", corps: { ref: "main", inputs: { chemin } } });
+    const s = supprimes();
+    s[chemin] = Date.now();
+    garder(CLES.supprimes, JSON.stringify(s));
+    toast("Supprimé");
+    history.length > 1 ? history.back() : (location.hash = "#/");
+  } catch (x) {
+    if (x.message !== "401") toast(`Suppression refusée : ${x.message}`);
+  }
 }
 const pubDe =(im) => im.publication || etat.fiche?.publication || "carrousel";
 const nomPublication = (pub) => NOMS_PUBLICATION[pub] || pub;
@@ -1095,7 +1131,12 @@ async function ecranNuit(nuit) {
           el("div", { class: "liste" }, fiche.choix.map(carteChoix)))
       : null,
     publications().map(sectionPublication),
-    (fiche.videos || []).map((v) => sectionVideo(nuit, v)));
+    (fiche.videos || []).map((v) => sectionVideo(nuit, v)),
+    ["mercato", "citations"].includes(fiche.publication)
+      ? el("button", { class: "lien m-supprimer", onclick: () => supprimerProduction(nuit,
+          fiche.publication === "mercato" ? `le mouvement « ${fiche.titre} », sa fiche et sa slide` : `cette production (${fiche.titre || "citations"})`) },
+          "Supprimer cette production")
+      : null);
   publications().forEach(majMarquePublication);
   majApercu();
   chargerImages(nuit);
@@ -1478,7 +1519,8 @@ async function ecranCitations() {
     miseAJour = veille.mis_a_jour || null;
   } catch (x) { if (x.message === "401") return; }
   try {
-    productions = (await (await contenu("citations/index.json")).json()).productions || [];
+    productions = ((await (await contenu("citations/index.json")).json()).productions || [])
+      .filter((p) => !estSupprime(cheminProduction(p)));
   } catch (x) { if (x.message === "401") return; }
   etat.citSel ||= new Set();
   etat.citOpt ||= {};
