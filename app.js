@@ -254,7 +254,11 @@ async function ecranListe() {
   catch (x) { if (x.message === "401") return; }
   try { ladders = (await (await contenu("ladders/index.json")).json()).editions || []; }
   catch (x) { if (x.message === "401") return; }
+  let mouvements = [];
+  try { mouvements = (await (await contenu("mercato/index.json")).json()).mouvements || []; }
+  catch (x) { if (x.message === "401") return; }
   afficher(tete, carteEtat(index),
+    mouvements.length ? sectionMercato(mouvements) : null,
     recaps.length ? el("section", { class: "section" }, el("h2", { texte: "La semaine des Bleus" }),
       el("div", { class: "liste" }, recaps.slice(0, 2).map((r) => el("button", {
         class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(r.dossier)}`),
@@ -277,7 +281,7 @@ async function ecranListe() {
  * Chaque image peut être retirée ou déplacée ; l'ordre de départ est celui du matin. */
 
 const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations", recap: "Le récap",
-                           ladders: "Le classement" };
+                           ladders: "Le classement", mercato: "Le mouvement" };
 const rangFr = (n) => (Number(n) === 1 ? "1er" : `${n}e`);
 
 /** « Wembanyama 2e · Sarr 9e », ou rien si aucun Français n'est classé. */
@@ -308,7 +312,30 @@ function sectionClassements(editions) {
     } }, "Éditions précédentes") : null,
     tous);
 }
-const pubDe = (im) => im.publication || etat.fiche?.publication || "carrousel";
+
+/* --- le mercato : trades, joueurs coupés, contrats des Français ---
+ * Une annonce (« selon Shams Charania ») est refaite avec le badge « Officiel » quand la
+ * ligue l'enregistre : la même carte change alors de pastille. */
+function sectionMercato(mouvements) {
+  const tous = el("div", { class: "liste cache" });
+  const carte = (m) => el("button", {
+    class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(m.dossier)}`),
+  },
+    el("span", { class: "date", texte: m.titre }),
+    el("span", { class: "meta", texte: m.sous_titre }),
+    el("span", { class: "pastilles" },
+      el("span", { class: m.statut === "officiel" ? "pastille orange" : "pastille", texte: m.statut === "officiel" ? "Officiel" : "Annonce" }),
+      estPubliee(m.dossier, "mercato") ? el("span", { class: "pastille orange", texte: "Publié ✓" }) : null));
+  mouvements.slice(3).forEach((m) => tous.append(carte(m)));
+  return el("section", { class: "section" }, el("h2", { texte: "Le mercato" }),
+    el("div", { class: "liste" }, mouvements.slice(0, 3).map(carte)),
+    mouvements.length > 3 ? el("button", { class: "lien", onclick: (ev) => {
+      tous.classList.toggle("cache");
+      ev.currentTarget.textContent = tous.classList.contains("cache") ? "Mouvements précédents" : "Masquer";
+    } }, "Mouvements précédents") : null,
+    tous);
+}
+const pubDe =(im) => im.publication || etat.fiche?.publication || "carrousel";
 const nomPublication = (pub) => NOMS_PUBLICATION[pub] || pub;
 const image = (fichier) => etat.fiche.images.find((im) => im.fichier === fichier);
 
@@ -603,11 +630,16 @@ async function ecranNuit(nuit) {
     entete(fiche.date_fr || fiche.titre || fiche.nuit,
            resumeTexte(fiche.resume)
              || (fiche.publication === "ladders" ? francaisClasses(fiche.francais) || "Aucun Français classé" : "")
+             || (fiche.publication === "mercato" ? fiche.sous_titre : "")
              || FORMATS[fiche.format] || "", { retour: true }),
-    fiche.source
+    fiche.source && fiche.publication === "ladders"
       ? el("p", { class: "aide" }, "Source : ",
           el("a", { href: fiche.source, target: "_blank", rel: "noopener noreferrer", texte: "NBA.com" }),
           " — publier une édition sur deux suffit.")
+      : null,
+    fiche.publication === "mercato" && fiche.lien
+      ? el("p", { class: "aide" }, "Source : ",
+          el("a", { href: fiche.lien, target: "_blank", rel: "noopener noreferrer", texte: fiche.nom_source || "ESPN" }))
       : null,
     fiche.alertes.length
       ? el("div", { class: "carte alerte" }, el("p", { texte: "À vérifier avant de publier :" }),
