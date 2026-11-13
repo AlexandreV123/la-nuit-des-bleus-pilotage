@@ -224,3 +224,39 @@ b.ok{color:var(--fluo)}
 details.plus{margin-top:10px}
 details.plus summary{font-size:14px;color:var(--gris);font-weight:600;padding:6px 0}
 details.plus .liste{margin-top:8px}
+
+/* volet Mercato : fiche d'un mouvement, recherche de joueurs, contreparties */
+.m-bloc{display:flex;flex-direction:column;gap:12px;margin-top:12px}
+.m-bloc > .r-titre{margin:0}
+.m-champ{display:flex;flex-direction:column;gap:6px}
+.m-champ .r-titre{margin:0}
+.m-bloc input[type=text],.m-bloc input[type=number],.m-bloc input[type=search],.m-bloc select{
+  background:var(--carte2);border:1px solid var(--bord);border-radius:10px;padding:11px 12px;font:inherit;
+  color:var(--txt);width:100%;min-width:0}
+.m-joueur{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:17px}
+.m-chercheur{display:flex;flex-direction:column;gap:8px}
+.m-resultats{display:flex;flex-direction:column;gap:6px}
+.m-resultat{display:flex;align-items:center;gap:10px;text-align:left;padding:11px 12px;border-radius:10px;
+  background:var(--carte2);border:1px solid var(--bord);color:var(--txt);font:inherit}
+.m-resultat .m-nom{font-weight:700;flex:none}
+.m-resultat small{color:var(--gris);font-size:13px;flex:1;min-width:0}
+.m-resultat.libre{border-style:dashed}
+.m-resultat .pastille{margin-left:auto}
+.m-elements{display:flex;flex-direction:column;gap:8px}
+.m-ligne{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:12px;background:rgba(255,255,255,.03);
+  border:1px solid var(--bord)}
+.m-corps{display:flex;flex-direction:column;gap:8px;flex:1;min-width:0}
+.m-outils{display:flex;gap:6px;flex:none}
+.m-mini{width:36px;height:36px;border-radius:10px;background:var(--carte2);border:1px solid var(--bord);
+  color:var(--txt);font-weight:800;font-size:15px;flex:none}
+.m-choix{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px}
+.m-choix label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--gris);font-weight:700}
+.m-ajouts{gap:8px}
+.m-case{display:flex;gap:10px;align-items:center;font-size:14px;color:var(--txt)}
+.m-case input{width:20px;height:20px;accent-color:#FF8A1F;flex:none}
+.m-colonnes{display:flex;flex-direction:column;gap:12px}
+.m-colonne{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:12px;border:1px solid var(--bord)}
+.m-etat{margin:4px 0 10px}
+.m-ecarter{display:block;margin:18px auto 90px;color:var(--gris)}
+.titre-section > h2{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--gris);font-weight:700;margin:0}
+.section > .titre-section{margin-bottom:10px}

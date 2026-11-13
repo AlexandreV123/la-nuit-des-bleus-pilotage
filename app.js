@@ -14,7 +14,8 @@ const WORKFLOW = "matin.yml";
 const REGLAGES = "reglages.yml";
 const CITATIONS = "citations.yml";
 const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation",
-               veille: "ndb.veille" };
+               veille: "ndb.veille", mercatoGen: "ndb.mercatoGen", mercatoVeille: "ndb.mercatoVeille",
+               mercatoEcartes: "ndb.mercatoEcartes" };
 const $app = document.getElementById("app");
 
 const etat = {
@@ -227,6 +228,7 @@ function carteEtat(index) {
 async function ecranListe() {
   const boutons = el("div", { class: "boutons-tete" },
     el("button", { class: "icone texte", "aria-label": "Citations", onclick: () => (location.hash = "#/citations") }, "Citations"),
+    el("button", { class: "icone texte", "aria-label": "Mercato", onclick: () => (location.hash = "#/mercato") }, "Mercato"),
     el("button", { class: "icone texte", "aria-label": "Les Bleus", onclick: () => (location.hash = "#/bleus") }, "Bleus"),
     el("button", { class: "icone", "aria-label": "Réglages", onclick: () => (location.hash = "#/relancer") }, "⚙"));
   const tete = entete("La nuit des Bleus", "Pilotage", { droite: boutons });
@@ -314,26 +316,469 @@ function sectionClassements(editions) {
 }
 
 /* --- le mercato : trades, joueurs coupés, contrats des Français ---
- * Une annonce (« selon Shams Charania ») est refaite avec le badge « Officiel » quand la
- * ligue l'enregistre : la même carte change alors de pastille. */
-function sectionMercato(mouvements) {
-  const tous = el("div", { class: "liste cache" });
-  const carte = (m) => el("button", {
-    class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(m.dossier)}`),
-  },
+ * Comme pour les citations, l'éditeur pilote : la veille prépare une fiche, on la corrige
+ * ici (ou on crée un mouvement de toutes pièces), puis on lance la slide. Une fiche
+ * retouchée n'est plus modifiée par la veille, sauf son statut (annonce -> officiel). */
+const MERCATO = "mercato.yml";
+const TYPES_MVT = {
+  trade: "Trade", trade3: "Trade à trois équipes", coupe: "Coupé", rachat: "Racheté (buyout)",
+  reclame: "Récupéré après avoir été coupé", signature: "Signature (nouvelle équipe)",
+  resignature: "Nouveau contrat (même équipe)", prolongation: "Prolongation",
+  conversion: "Contrat standard (fin du two-way)",
+};
+const FAMILLE_MVT = { trade: "trade", trade3: "trade", coupe: "coupe", rachat: "coupe", reclame: "reclame",
+  signature: "contrat", resignature: "contrat", prolongation: "contrat", conversion: "contrat" };
+const NATURES_CONTRAT = ["contrat", "prolongation", "contrat two-way", "contrat de 10 jours",
+  "jusqu'à la fin de la saison", "contrat standard", "contrat d'essai", "prolongation de contrat rookie"];
+const EQUIPES_NBA = { ATL: "Hawks", BOS: "Celtics", BKN: "Nets", CHA: "Hornets", CHI: "Bulls", CLE: "Cavaliers",
+  DAL: "Mavericks", DEN: "Nuggets", DET: "Pistons", GSW: "Warriors", HOU: "Rockets", IND: "Pacers",
+  LAC: "Clippers", LAL: "Lakers", MEM: "Grizzlies", MIA: "Heat", MIL: "Bucks", MIN: "Timberwolves",
+  NOP: "Pelicans", NYK: "Knicks", OKC: "Thunder", ORL: "Magic", PHI: "76ers", PHX: "Suns",
+  POR: "Trail Blazers", SAC: "Kings", SAS: "Spurs", TOR: "Raptors", UTA: "Jazz", WAS: "Wizards" };
+const POSTES_FR = { PG: "meneur", SG: "arrière", G: "arrière", SF: "ailier", F: "ailier", PF: "ailier fort",
+  C: "pivot", "G-F": "arrière-ailier", "F-G": "arrière-ailier", "F-C": "intérieur", "C-F": "intérieur" };
+const LISTE_POSTES = ["", "meneur", "arrière", "arrière-ailier", "ailier", "ailier fort", "intérieur", "pivot"];
+
+const sansAccent = (t) => (t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
+const ecartes = () => lireJSON(CLES.mercatoEcartes, {});
+function ecarter(cle, oui) {
+  const e = ecartes();
+  if (oui) e[cle] = Date.now(); else delete e[cle];
+  garder(CLES.mercatoEcartes, JSON.stringify(e));
+}
+
+/** L'état d'une fiche en une pastille : à vérifier, slide prête, slide à refaire. */
+function pastilleMvt(m) {
+  if (m.a_regenerer) return el("span", { class: "pastille orange", texte: "Slide à refaire" });
+  if (m.genere) return el("span", { class: "pastille orange", texte: "Slide prête" });
+  return el("span", { class: "pastille rouge", texte: "À vérifier" });
+}
+
+function carteMvt(m) {
+  return el("button", { class: "carte nuit", onclick: () => (location.hash = `#/mercato/${encodeURIComponent(m.cle)}`) },
     el("span", { class: "date", texte: m.titre }),
     el("span", { class: "meta", texte: m.sous_titre }),
-    el("span", { class: "pastilles" },
-      el("span", { class: m.statut === "officiel" ? "pastille orange" : "pastille", texte: m.statut === "officiel" ? "Officiel" : "Annonce" }),
+    el("span", { class: "pastilles" }, pastilleMvt(m),
+      el("span", { class: "pastille", texte: m.statut === "officiel" ? "Officiel" : "Annonce" }),
+      m.editee ? el("span", { class: "pastille", texte: "retouchée" }) : null,
       estPubliee(m.dossier, "mercato") ? el("span", { class: "pastille orange", texte: "Publié ✓" }) : null));
-  mouvements.slice(3).forEach((m) => tous.append(carte(m)));
-  return el("section", { class: "section" }, el("h2", { texte: "Le mercato" }),
-    el("div", { class: "liste" }, mouvements.slice(0, 3).map(carte)),
-    mouvements.length > 3 ? el("button", { class: "lien", onclick: (ev) => {
-      tous.classList.toggle("cache");
-      ev.currentTarget.textContent = tous.classList.contains("cache") ? "Mouvements précédents" : "Masquer";
-    } }, "Mouvements précédents") : null,
-    tous);
+}
+
+/** Accueil : les trois derniers mouvements, le reste dans le volet Mercato. */
+function sectionMercato(mouvements) {
+  const e = ecartes();
+  const vus = mouvements.filter((m) => !e[m.cle]);
+  if (!vus.length) return null;
+  const aVerifier = vus.filter((m) => !m.genere || m.a_regenerer).length;
+  return el("section", { class: "section" },
+    el("div", { class: "titre-section" }, el("h2", { texte: "Le mercato" }),
+      el("button", { class: "lien", onclick: () => (location.hash = "#/mercato") },
+        aVerifier ? `${aVerifier} à vérifier →` : "Tout voir →")),
+    el("div", { class: "liste" }, vus.slice(0, 3).map(carteMvt)));
+}
+
+function carteEnCours(titre, texte) {
+  return el("div", { class: "carte etat" },
+    el("div", { class: "etat-tete" }, el("span", { class: "voyant encours" }), el("strong", { texte: titre })),
+    el("p", { class: "aide", texte }));
+}
+
+/** La veille lancée à la main : on la suit jusqu'à ce que l'index soit réécrit. */
+async function suivreVeilleMercato(zone) {
+  const v = lireJSON(CLES.mercatoVeille, null);
+  if (!v) return false;
+  if (Date.now() - v.depuis > 10 * 60e3) {
+    garder(CLES.mercatoVeille, null);
+    zone.replaceChildren(el("div", { class: "carte alerte" },
+      el("p", { texte: "La veille n'a rien donné après 10 minutes : regarde les derniers lancements dans ⚙." })));
+    return false;
+  }
+  zone.replaceChildren(carteEnCours("Veille en cours…",
+    `Lancée à ${heureCourte(new Date(v.depuis).toISOString())}. Compte 1 à 2 minutes : la liste se mettra à jour toute seule.`));
+  try {
+    const index = await (await contenu("mercato/index.json")).json();
+    if (index.verifie_le && new Date(index.verifie_le).getTime() >= v.depuis - 60e3) {
+      garder(CLES.mercatoVeille, null);
+      const connues = new Set(v.cles || []);
+      const neuves = (index.mouvements || []).filter((m) => !connues.has(m.cle)).length;
+      toast(neuves ? `Veille terminée : ${pluriel(neuves, "mouvement")}` : "Veille terminée : rien de nouveau");
+      return true;
+    }
+  } catch (x) { /* index pas encore créé : on réessaiera */ }
+  return false;
+}
+
+/** La slide demandée : on attend qu'elle apparaisse dans l'index, puis on l'ouvre. */
+async function suivreGenerationMercato(zone) {
+  const g = lireJSON(CLES.mercatoGen, null);
+  if (!g) return;
+  if (Date.now() - g.depuis > 20 * 60e3) {
+    garder(CLES.mercatoGen, null);
+    zone.replaceChildren(el("div", { class: "carte alerte" },
+      el("p", { texte: "La slide n'est pas arrivée après 20 minutes : regarde les derniers lancements dans ⚙." })));
+    return;
+  }
+  zone.replaceChildren(carteEnCours("Slide en cours…",
+    `${g.joueur} · lancée à ${heureCourte(new Date(g.depuis).toISOString())}. Compte 3 à 4 minutes.`));
+  try {
+    const index = await (await contenu("mercato/index.json")).json();
+    const prete = (index.mouvements || []).find((m) => (g.cle ? m.cle === g.cle : m.joueur === g.joueur)
+      && m.genere_le && new Date(m.genere_le).getTime() >= g.depuis - 120e3);
+    if (prete) {
+      garder(CLES.mercatoGen, null);
+      toast("C'est prêt !");
+      location.hash = `#/production/${encodeURIComponent(prete.dossier)}`;
+    }
+  } catch (x) { /* index pas encore réécrit : on réessaiera */ }
+}
+
+function carteVeilleMercato(verifieLe, cles, zone, recharger) {
+  const bouton = el("button", { class: "btn" }, "Lancer une veille");
+  bouton.disabled = Boolean(lireJSON(CLES.mercatoVeille, null));
+  bouton.addEventListener("click", async () => {
+    bouton.disabled = true;
+    try {
+      await gh(`/repos/${etat.depot}/actions/workflows/${MERCATO}/dispatches`,
+        { methode: "POST", corps: { ref: "main", inputs: { mode: "veille" } } });
+      garder(CLES.mercatoVeille, JSON.stringify({ depuis: Date.now(), cles }));
+      toast("Veille lancée");
+      if (await suivreVeilleMercato(zone)) recharger();
+    } catch (x) {
+      if (x.message !== "401") toast(`Lancement refusé : ${x.message}`);
+      bouton.disabled = false;
+    }
+  });
+  return el("div", { class: "carte veille" },
+    el("div", {},
+      el("p", { class: "r-titre", texte: "Veille des transferts" }),
+      el("p", { class: "aide", texte: verifieLe ? `Dernière mise à jour : ${quandCourt(verifieLe)}` : "Pas encore de passage" }),
+      el("p", { class: "aide", texte: "Automatique, de plus en plus souvent à l'approche du 11 février." })),
+    bouton);
+}
+
+async function ecranMercato() {
+  clearInterval(etat.minuterie);
+  afficher(entete("Mercato", "Chargement…", { retour: true }), el("p", { class: "aide", texte: "Chargement…" }));
+  let index = { mouvements: [] };
+  try { index = await (await contenu("mercato/index.json")).json(); }
+  catch (x) { if (x.message === "401") return; }
+  const mouvements = index.mouvements || [];
+  const e = ecartes();
+  const actifs = mouvements.filter((m) => !e[m.cle]);
+  const aVerifier = actifs.filter((m) => !m.genere || m.a_regenerer);
+  const prets = actifs.filter((m) => m.genere && !m.a_regenerer);
+  const mis = mouvements.filter((m) => e[m.cle]);
+  const suivi = el("div", {});
+  afficher(
+    entete("Mercato", aVerifier.length ? `${aVerifier.length} à vérifier` : "Trades, coupés, contrats des Français", { retour: true }),
+    suivi,
+    carteVeilleMercato(index.verifie_le, mouvements.map((m) => m.cle), suivi, ecranMercato),
+    el("button", { class: "btn", onclick: () => (location.hash = "#/mercato/nouveau") }, "+ Nouveau mouvement"),
+    el("section", { class: "section" }, el("h2", { texte: "À vérifier" }),
+      aVerifier.length ? el("div", { class: "liste" }, aVerifier.map(carteMvt))
+        : el("p", { class: "aide", texte: "Rien à vérifier. Chaque mouvement repéré arrive ici, avec une notification." })),
+    prets.length ? el("section", { class: "section" }, el("h2", { texte: "Slides prêtes" }),
+      el("div", { class: "liste" }, prets.slice(0, 4).map(carteMvt)),
+      prets.length > 4 ? el("details", { class: "plus" }, el("summary", { texte: `${pluriel(prets.length - 4, "mouvement")} plus ancien${prets.length > 5 ? "s" : ""}` }),
+        el("div", { class: "liste" }, prets.slice(4).map(carteMvt))) : null) : null,
+    mis.length ? el("details", { class: "plus" }, el("summary", { texte: `${pluriel(mis.length, "mouvement")} écarté${mis.length > 1 ? "s" : ""}` }),
+      el("div", { class: "liste" }, mis.map(carteMvt))) : null);
+  const suivre = async () => {
+    if (lireJSON(CLES.mercatoGen, null)) suivreGenerationMercato(suivi);
+    else if (await suivreVeilleMercato(suivi)) ecranMercato();
+  };
+  suivre();
+  etat.minuterie = setInterval(suivre, 15000);
+}
+
+/* --- l'éditeur d'un mouvement --- */
+
+const champMvt = (titre, ...enfants) => el("div", { class: "m-champ" }, el("label", { class: "r-titre", texte: titre }), ...enfants);
+
+function listeDeroulante(options, valeur, quandChange) {
+  const s = el("select", {}, options.map(([v, t]) => el("option", { value: v, texte: t })));
+  s.value = valeur ?? "";
+  s.addEventListener("change", () => quandChange(s.value));
+  return s;
+}
+
+function choixEquipe(valeur, quandChange, vide = "Inconnue") {
+  const options = [["", vide], ...Object.entries(EQUIPES_NBA).sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([c, n]) => [c, `${n} (${c})`])];
+  return listeDeroulante(options, valeur || "", (v) => quandChange(v || null));
+}
+
+function saisie(type, valeur, attrs, quandChange) {
+  const i = el("input", { type, ...attrs });
+  i.value = valeur ?? "";
+  i.addEventListener("input", () => quandChange(i.value));
+  return i;
+}
+
+/** Recherche dans la base des joueurs NBA (effectifs ESPN) : pas de faute de nom possible,
+ *  et la photo est retrouvée à la génération. */
+function chercheurJoueur(quandChoisi, { francaisDabord = false } = {}) {
+  const base = etat.baseJoueurs || [];
+  const champ = el("input", { type: "search", placeholder: "Tape un nom…", autocomplete: "off", enterkeyhint: "search" });
+  const resultats = el("div", { class: "m-resultats" });
+  const maj = () => {
+    const brut = champ.value.trim().replace(/\s+/g, " ");
+    const q = sansAccent(brut);
+    const mots = q.split(" ").filter(Boolean);
+    const trouves = q.length < 2 ? [] : base.filter((j) => {
+      const n = sansAccent(j.nom);
+      const parts = n.split(/[\s'.-]+/);
+      return mots.every((w) => parts.some((p) => p.startsWith(w)) || n.includes(w));
+    }).sort((a, b) => (francaisDabord ? Number(b.fr) - Number(a.fr) : 0) || a.nom.localeCompare(b.nom));
+    const items = [];
+    if (q.length < 2) {
+      items.push(el("p", { class: "aide", texte: base.length
+        ? `${base.length} joueurs dans la base. Tape au moins deux lettres.`
+        : "La base des joueurs arrive avec la prochaine veille : en attendant, saisis le nom tel quel." }));
+    } else {
+      items.push(...trouves.slice(0, 8).map((j) => el("button", { class: "m-resultat", onclick: () => quandChoisi(j) },
+        el("span", { class: "m-nom", texte: j.nom }),
+        el("small", { texte: [j.code ? EQUIPES_NBA[j.code] || j.code : "sans club", POSTES_FR[j.poste]].filter(Boolean).join(" · ") }),
+        j.fr ? el("span", { class: "pastille mini-p", texte: "FR" }) : null)));
+      if (!trouves.length) items.push(el("p", { class: "aide", texte: "Aucun joueur de la base ne correspond." }));
+    }
+    if (brut.length >= 3) {
+      items.push(el("button", { class: "m-resultat libre", onclick: () => quandChoisi({ nom: brut, espn_id: null, code: "", poste: "" }) },
+        el("span", { class: "m-nom", texte: `Utiliser « ${brut} » tel quel` }),
+        el("small", { texte: "absent de la base : vérifie l'orthographe, la photo sera cherchée par le nom" })));
+    }
+    resultats.replaceChildren(...items);
+  };
+  champ.addEventListener("input", maj);
+  champ.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); resultats.querySelector("button")?.click(); }
+  });
+  maj();
+  setTimeout(() => champ.focus(), 0);
+  return el("div", { class: "m-chercheur" }, champ, resultats);
+}
+
+/** Une contrepartie : joueur, choix de draft, argent ou droits, avec ses réglages. */
+function ligneElement(e, i, liste, rendre) {
+  const outils = el("div", { class: "m-outils" },
+    i > 0 ? el("button", { class: "m-mini", "aria-label": "Monter", onclick: () => {
+      [liste[i - 1], liste[i]] = [liste[i], liste[i - 1]]; rendre(); } }, "↑") : null,
+    el("button", { class: "m-mini", "aria-label": "Retirer", onclick: () => { liste.splice(i, 1); rendre(); } }, "✕"));
+  let corps;
+  if (e.genre === "joueur") {
+    corps = [el("strong", { texte: e.nom }),
+      listeDeroulante(LISTE_POSTES.map((p) => [p, p || "Poste ?"]), LISTE_POSTES.includes(e.poste) ? e.poste : "",
+        (v) => { e.poste = v; })];
+  } else if (e.genre === "choix") {
+    corps = [el("strong", { texte: "Choix de draft" }),
+      el("div", { class: "m-choix" },
+        el("label", {}, "Tour", listeDeroulante([["1", "1er tour"], ["2", "2e tour"], ["", "Non précisé"]], e.tour == null ? "" : String(e.tour),
+          (v) => { e.tour = v ? Number(v) : null; })),
+        el("label", {}, "Année", saisie("number", e.annee, { min: "2025", max: "2040", placeholder: "—", inputmode: "numeric" },
+          (v) => { e.annee = v ? Number(v) : null; })),
+        el("label", {}, "Nombre", saisie("number", e.nombre || 1, { min: "1", max: "9", inputmode: "numeric" },
+          (v) => { e.nombre = Math.max(1, Number(v) || 1); }))),
+      saisie("text", e.protection, { maxlength: "40", placeholder: "Protection (ex. protégé top 10), facultatif" },
+        (v) => { e.protection = v; })];
+  } else if (e.genre === "argent") {
+    corps = [el("strong", { texte: "Compensation financière" })];
+  } else {
+    corps = [el("strong", { texte: "Droits sur un joueur pas encore en NBA" }),
+      saisie("text", e.nom, { maxlength: "50", placeholder: "Nom du joueur" }, (v) => { e.nom = v; })];
+  }
+  return el("div", { class: "m-ligne" }, el("div", { class: "m-corps" }, corps), outils);
+}
+
+function editeurElements(liste, rendre) {
+  const zoneAjout = el("div", {});
+  const ajouter = (e) => { liste.push(e); rendre(); };
+  return el("div", { class: "m-elements" },
+    liste.length ? liste.map((e, i) => ligneElement(e, i, liste, rendre))
+      : el("p", { class: "aide", texte: "Rien pour l'instant." }),
+    zoneAjout,
+    el("div", { class: "pastilles m-ajouts" },
+      el("button", { class: "pastille tag", onclick: () => zoneAjout.replaceChildren(
+        chercheurJoueur((j) => ajouter({ genre: "joueur", nom: j.nom, espn_id: j.espn_id, poste: POSTES_FR[j.poste] || "" }))) }, "+ Joueur"),
+      el("button", { class: "pastille tag", onclick: () => ajouter({ genre: "choix", tour: 2, annee: null, nombre: 1, protection: "" }) }, "+ Choix de draft"),
+      el("button", { class: "pastille tag", onclick: () => ajouter({ genre: "argent" }) }, "+ Argent"),
+      el("button", { class: "pastille tag", onclick: () => ajouter({ genre: "droits", nom: "" }) }, "+ Droits")));
+}
+
+function blocJoueurMvt(m, rendre) {
+  const zone = el("div", {});
+  const nom = `${m.joueur.prenom || ""} ${m.joueur.nom || ""}`.trim();
+  const choisi = (j) => {
+    const [prenom, ...reste] = j.nom.split(" ");
+    m.joueur = { prenom: reste.length ? prenom : "", nom: reste.length ? reste.join(" ") : prenom, espn_id: j.espn_id || null, nba_id: null };
+    // l'équipe actuelle du joueur pré-remplit le départ (ou l'équipe du contrat)
+    if (j.code && FAMILLE_MVT[m.type] === "contrat" && !m.vers) m.vers = j.code;
+    else if (j.code && FAMILLE_MVT[m.type] !== "contrat" && !m.de) m.de = j.code;
+    rendre();
+  };
+  zone.append(el("div", { class: "m-joueur" },
+    el("strong", { texte: nom || "Aucun joueur choisi" }),
+    el("button", { class: "lien", onclick: () => zone.replaceChildren(chercheurJoueur(choisi, { francaisDabord: true })) },
+      nom ? "Changer" : "Choisir")));
+  if (!nom) zone.replaceChildren(chercheurJoueur(choisi, { francaisDabord: true }));
+  return zone;
+}
+
+function blocColonnes(m, rendre) {
+  if (!m.equipes?.length) {
+    m.equipes = [{ code: m.vers, recoit: [] }, { code: m.de, recoit: m.contreparties || [] }, { code: null, recoit: [] }];
+  }
+  return el("div", { class: "m-colonnes" },
+    m.equipes.map((c, i) => el("div", { class: "m-colonne" },
+      el("div", { class: "r-pied" },
+        choixEquipe(c.code, (v) => { c.code = v; rendre(); }, "Équipe ?"),
+        el("button", { class: "m-mini", "aria-label": "Retirer l'équipe", onclick: () => { m.equipes.splice(i, 1); rendre(); } }, "✕")),
+      c.code && c.code === m.vers ? el("p", { class: "aide", texte: "Équipe d'arrivée : le Français y figure d'office." }) : null,
+      el("p", { class: "r-titre", texte: "Reçoit" }),
+      editeurElements(c.recoit ||= [], rendre))),
+    m.equipes.length < 4 ? el("button", { class: "btn", onclick: () => { m.equipes.push({ code: null, recoit: [] }); rendre(); } }, "+ Équipe") : null);
+}
+
+function formulaireMvt(m, rendre) {
+  const famille = FAMILLE_MVT[m.type];
+  const blocs = [
+    el("section", { class: "section carte m-bloc" },
+      champMvt("Type de mouvement", listeDeroulante(Object.entries(TYPES_MVT), m.type, (v) => {
+        m.type = v;
+        // l'équipe déjà connue passe là où ce type de mouvement l'attend
+        if (FAMILLE_MVT[v] === "contrat" && !m.vers && m.de) m.vers = m.de;
+        if (FAMILLE_MVT[v] === "coupe" && !m.de && m.vers) m.de = m.vers;
+        if (FAMILLE_MVT[v] === "contrat" && !m.contrat) m.contrat = { montant: null, annees: null, nature: v === "prolongation" ? "prolongation" : "contrat" };
+        if (FAMILLE_MVT[v] === "trade" && m.contreparties === undefined) m.contreparties = [];
+        rendre();
+      })),
+      champMvt("Statut", listeDeroulante([["rumeur", "Annonce (pas encore officiel)"], ["officiel", "Officiel"]], m.statut,
+        (v) => { m.statut = v; })),
+      champMvt("Source", saisie("text", m.source?.nom, { maxlength: "60", placeholder: "Shams Charania (ESPN)" },
+        (v) => { m.source = { ...(m.source || {}), nom: v }; }))),
+    el("section", { class: "section carte m-bloc" }, champMvt("Le joueur", blocJoueurMvt(m, rendre))),
+  ];
+  const equipes = [];
+  if (famille === "trade" || famille === "reclame") {
+    equipes.push(champMvt(famille === "reclame" ? "Coupé par" : "Équipe de départ", choixEquipe(m.de, (v) => { m.de = v; })),
+                 champMvt(famille === "reclame" ? "Récupéré par" : "Équipe d'arrivée", choixEquipe(m.vers, (v) => { m.vers = v; })));
+  } else if (famille === "coupe") {
+    equipes.push(champMvt("Équipe qui le libère", choixEquipe(m.de, (v) => { m.de = v; })));
+  } else {
+    equipes.push(champMvt("Équipe", choixEquipe(m.vers, (v) => { m.vers = v; })));
+  }
+  blocs.push(el("section", { class: "section carte m-bloc" }, equipes));
+
+  if (m.type === "trade") {
+    const inconnues = el("input", { type: "checkbox" });
+    inconnues.checked = m.contreparties == null;
+    inconnues.addEventListener("change", () => {
+      if (inconnues.checked) { m._gardees = m.contreparties; m.contreparties = null; }
+      else m.contreparties = m._gardees || [];
+      rendre();
+    });
+    blocs.push(el("section", { class: "section carte m-bloc" },
+      el("label", { class: "r-titre", texte: `En échange, ${m.de ? `les ${EQUIPES_NBA[m.de]}` : "l'équipe de départ"} reçoivent` }),
+      el("label", { class: "m-case" }, inconnues, "Contreparties encore inconnues (« Contreparties à venir » sur la slide)"),
+      m.contreparties == null ? null : editeurElements(m.contreparties, rendre)));
+  } else if (m.type === "trade3") {
+    blocs.push(el("section", { class: "section carte m-bloc" },
+      el("label", { class: "r-titre", texte: "Ce que reçoit chaque équipe" }), blocColonnes(m, rendre)));
+  } else if (famille === "contrat") {
+    m.contrat ||= { montant: null, annees: null, nature: "contrat" };
+    const c = m.contrat;
+    blocs.push(el("section", { class: "section carte m-bloc" },
+      el("div", { class: "m-choix" },
+        el("label", {}, "Montant total (M$)", saisie("number", c.montant, { min: "0", step: "0.1", placeholder: "inconnu", inputmode: "decimal" },
+          (v) => { c.montant = v ? Number(v) : null; })),
+        el("label", {}, "Années", saisie("number", c.annees, { min: "1", max: "7", placeholder: "—", inputmode: "numeric" },
+          (v) => { c.annees = v ? Number(v) : null; }))),
+      champMvt("Nature du contrat", listeDeroulante(NATURES_CONTRAT.map((n) => [n, n[0].toUpperCase() + n.slice(1)]), c.nature,
+        (v) => { c.nature = v; })),
+      el("p", { class: "aide", texte: "Sans montant, la slide affiche la nature du contrat (Two-way, 10 jours…)." })));
+  }
+  if (m.texte) {
+    blocs.push(el("details", { class: "carte m-bloc" }, el("summary", { texte: "Texte d'origine" }),
+      el("p", { class: "cit-contexte", texte: m.texte }),
+      m.source?.url ? el("p", { class: "aide" }, el("a", { href: m.source.url, target: "_blank", rel: "noopener noreferrer", class: "lien" }, "Ouvrir la source")) : null));
+  }
+  return blocs;
+}
+
+async function ecranMouvement(cle) {
+  clearInterval(etat.minuterie);
+  const nouveau = cle === "nouveau";
+  afficher(entete(nouveau ? "Nouveau mouvement" : "Mouvement", "Chargement…", { retour: true }),
+    el("p", { class: "aide", texte: "Chargement…" }));
+  let fiche = null, entree = null;
+  if (!nouveau) {
+    try { fiche = await (await contenu(`mercato/${cle}/mouvement.json`)).json(); }
+    catch (x) {
+      if (x.message === "401") return;
+      afficher(entete("Introuvable", null, { retour: true }),
+        el("div", { class: "carte alerte" }, el("p", { texte: `Fiche introuvable : ${x.message}` })));
+      return;
+    }
+    try { entree = ((await (await contenu("mercato/index.json")).json()).mouvements || []).find((m) => m.cle === cle) || null; }
+    catch (x) { if (x.message === "401") return; }
+  }
+  if (!etat.baseJoueurs?.length) {
+    try { etat.baseJoueurs = (await (await contenu("mercato/joueurs.json")).json()).joueurs || []; }
+    catch (x) { if (x.message === "401") return; etat.baseJoueurs = []; }
+  }
+  const m = fiche ? structuredClone(fiche) : {
+    cle: "", type: "trade", statut: "rumeur", joueur: { prenom: "", nom: "" }, de: null, vers: null,
+    contreparties: [], source: { nom: "Shams Charania (ESPN)", url: "" }, date: new Date().toISOString(),
+  };
+  if (!nouveau) m.cle = cle;
+
+  const suivi = el("div", {});
+  const zone = el("div", {});
+  const rendre = () => zone.replaceChildren(...formulaireMvt(m, rendre));
+  rendre();
+
+  const bouton = el("button", { class: "btn principal" }, entree?.genere ? "Refaire la slide" : "Générer la slide");
+  const majBouton = () => { bouton.disabled = Boolean(lireJSON(CLES.mercatoGen, null)); };
+  bouton.addEventListener("click", async () => {
+    if (!m.joueur?.nom) { toast("Choisis d'abord le joueur."); return; }
+    const envoi = { ...m };
+    delete envoi._gardees;
+    const texte = JSON.stringify(envoi);
+    if (texte.length > 60000) { toast("Fiche trop longue : retire quelques éléments."); return; }
+    bouton.disabled = true;
+    try {
+      await gh(`/repos/${etat.depot}/actions/workflows/${MERCATO}/dispatches`,
+        { methode: "POST", corps: { ref: "main", inputs: { mode: "generer", fiche: texte } } });
+      garder(CLES.mercatoGen, JSON.stringify({ cle: m.cle || "", joueur: `${m.joueur.prenom} ${m.joueur.nom}`.trim(), depuis: Date.now() }));
+      toast("Slide lancée");
+      window.scrollTo(0, 0);                       // le suivi s'affiche en haut de la fiche
+      suivreGenerationMercato(suivi);
+    } catch (x) {
+      if (x.message !== "401") toast(`Lancement refusé : ${x.message}`);
+      majBouton();
+    }
+  });
+  majBouton();
+
+  const estEcarte = !nouveau && Boolean(ecartes()[cle]);
+  afficher(
+    entete(nouveau ? "Nouveau mouvement" : (entree?.titre || "Mouvement"), entree?.sous_titre || "Tout se règle ici avant la slide", { retour: true }),
+    suivi,
+    entree ? el("div", { class: "pastilles m-etat" }, pastilleMvt(entree),
+      entree.editee ? el("span", { class: "pastille", texte: "retouchée" }) : null) : null,
+    entree?.a_regenerer ? el("div", { class: "carte alerte-orange" },
+      el("p", { texte: entree.a_regenerer === "officiel"
+        ? "C'est devenu officiel depuis la slide : refais-la pour avoir le badge « Officiel »."
+        : "La veille a reçu des précisions depuis la slide : vérifie la fiche puis refais-la." })) : null,
+    entree?.genere ? el("button", { class: "btn", onclick: () => (location.hash = `#/production/${encodeURIComponent(entree.dossier)}`) },
+      "Voir la slide et la légende") : null,
+    zone,
+    nouveau ? null : el("button", { class: "lien m-ecarter", onclick: () => {
+      ecarter(cle, !estEcarte); toast(estEcarte ? "Remis dans la liste" : "Écarté de la liste"); history.back(); } },
+      estEcarte ? "Remettre ce mouvement dans la liste" : "Écarter ce mouvement (fausse piste, sans intérêt…)"),
+    el("div", { class: "barre" }, bouton));
+  suivreGenerationMercato(suivi);
+  etat.minuterie = setInterval(() => { suivreGenerationMercato(suivi); majBouton(); }, 15000);
 }
 const pubDe =(im) => im.publication || etat.fiche?.publication || "carrousel";
 const nomPublication = (pub) => NOMS_PUBLICATION[pub] || pub;
@@ -1169,6 +1614,8 @@ function router() {
   else if (route === "relancer") ecranRelancer();
   else if (route === "bleus") ecranBleus();
   else if (route === "citations") ecranCitations();
+  else if (route === "mercato") ecranMercato();
+  else if (route.startsWith("mercato/")) ecranMouvement(decodeURIComponent(route.slice(8)));
   else if (route.startsWith("production/")) ecranNuit(decodeURIComponent(route.slice(11)));
   else ecranListe();
 }
