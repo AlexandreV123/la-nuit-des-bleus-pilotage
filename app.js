@@ -1256,11 +1256,15 @@ function blocReelAnime(nuit, fiche) {
     } catch (x) { /* fiche pas encore republiée : on réessaiera */ }
   };
 
+  const volet = anime ? voletZones(nuit, video) : null;
+
   bouton.addEventListener("click", async () => {
     bouton.disabled = true;
     try {
+      const inputs = { nuit };
+      if (volet) inputs.zones = JSON.stringify(volet.choix());
       await gh(`/repos/${etat.depot}/actions/workflows/${REEL}/dispatches`,
-        { methode: "POST", corps: { ref: "main", inputs: { nuit } } });
+        { methode: "POST", corps: { ref: "main", inputs } });
       garder(CLES.reelGen, JSON.stringify({ nuit, depuis: Date.now() }));
       toast("Fabrication du Reel animé lancée");
       suivre();
@@ -1278,8 +1282,160 @@ function blocReelAnime(nuit, fiche) {
     el("p", { class: "aide", texte: anime
       ? "Le Reel ci-dessus est la version animée. Tu peux la refaire, par exemple après une correction des stats."
       : "Le Reel ci-dessus est la version simple (diaporama). La version animée arrive d'habitude quelques minutes après le carrousel ; sinon, lance-la ici." }),
+    volet ? volet.noeud : null,
     zone,
     bouton);
+}
+
+/* --- le bas des cartes du Reel (zone sous « Sa saison / Prochain match ») ---
+ * Par défaut : l'équipe ce matin. L'éditeur peut choisir à la place un fait proposé (noté sur 10,
+ * « suggéré » à partir de 7), une citation de la veille (vérifiée, raccourcie au besoin), un texte
+ * à lui, ou rien. Rien ne part sans « Refaire le Reel animé ». Voir src/zone_reel.py. */
+const ZONE_MAX = 140;
+
+function voletZones(nuit, video) {
+  const zones = video.zones || {};
+  const props = zones.propositions || {};
+  const appliques = zones.choix || {};
+  const choix = JSON.parse(JSON.stringify(appliques));
+  const noms = Object.keys(props);
+  const info = el("p", { class: "aide" });
+  const majInfo = () => {
+    const change = JSON.stringify(nettoyerZones(choix)) !== JSON.stringify(nettoyerZones(appliques));
+    info.textContent = change
+      ? "Choix modifiés : appuie sur « Refaire le Reel animé » pour les appliquer."
+      : "Ces choix sont ceux du Reel ci-dessus.";
+    info.classList.toggle("a-faire", change);
+  };
+  const cartes = noms.map((nom) => carteZone(nom, props[nom], choix, majInfo));
+  // les citations de la veille, chargées à part : la fiche s'affiche sans attendre
+  (async () => {
+    try {
+      const veille = await (await contenu("citations/candidats.json")).json();
+      // rattachées à ce match (date américaine du match = la nuit) ; sans match connu, publiées dans les 2 jours
+      const t0 = new Date(`${nuit}T00:00:00Z`).getTime();
+      const proches = (veille.candidats || []).filter((c) => {
+        if (c.match?.date) return new Date(new Date(c.match.date).getTime() - 5 * 36e5).toISOString().slice(0, 10) === nuit;
+        const t = new Date(c.publiee || 0).getTime();
+        return t >= t0 && t <= t0 + 3 * 864e5;
+      });
+      cartes.forEach((c) => c.citations(citationsDe(c.nom, proches)));
+    } catch { cartes.forEach((c) => c.citations([])); }
+  })();
+  majInfo();
+  return {
+    noeud: noms.length ? el("div", { class: "zones-reel" },
+      el("h2", { class: "sous-titre", texte: "Le bas des cartes" }),
+      el("p", { class: "aide", texte: "Sous « Sa saison / Prochain match ». Par défaut : l'équipe ce matin." }),
+      cartes.map((c) => c.noeud), info) : null,
+    choix: () => nettoyerZones(choix),
+  };
+}
+
+/** Les citations proposées pour un joueur : celles que la veille ne conseille pas de retirer
+ * (à défaut, les 3 mieux notées), sans doublon (un extrait contenu dans une version plus longue). */
+function citationsDe(nom, candidats) {
+  const siennes = candidats.filter((x) => x.joueur === nom).sort((a, b) => (b.score || 0) - (a.score || 0));
+  const bonnes = siennes.filter((x) => x.suggestion !== "retirer");
+  const liste = bonnes.length ? bonnes : siennes.slice(0, 3);
+  const norme = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9à-ÿ]+/g, " ").trim();
+  return liste.filter((x) => !liste.some((y) => y !== x && norme(y.citation).length > norme(x.citation).length
+    && norme(y.citation).includes(norme(x.citation))));
+}
+
+function nettoyerZones(choix) {
+  const sortie = {};
+  for (const [nom, c] of Object.entries(choix)) {
+    if (!c || !c.type || c.type === "equipe") continue;
+    if (["fait", "citation"].includes(c.type) && !String(c.texte || "").trim()) continue;
+    sortie[nom] = { ...c };
+    if (c.texte) sortie[nom].texte = String(c.texte).trim().slice(0, ZONE_MAX);
+  }
+  return sortie;
+}
+
+function carteZone(nom, prop, choix, majInfo) {
+  const groupe = `zone-${nom.replace(/[^A-Za-z0-9]+/g, "-")}`;
+  const options = el("div", { class: "z-options" });
+  const editeur = el("div", {});
+  const actuel = () => choix[nom] || { type: "equipe" };
+  let candidats = null;
+
+  const champ = (c) => {
+    const zone = el("textarea", { class: "z-texte", maxlength: String(ZONE_MAX), spellcheck: "true" });
+    zone.value = c.texte || "";
+    const compte = el("span", { class: "aide" });
+    const majCompte = () => { compte.textContent = `${zone.value.length} / ${ZONE_MAX}`; };
+    zone.addEventListener("input", () => { c.texte = zone.value; majCompte(); majInfo(); });
+    majCompte();
+    return el("div", { class: "z-edit" }, zone, compte);
+  };
+
+  const majEditeur = () => {
+    const c = actuel();
+    if (c.type === "citation") {
+      editeur.replaceChildren(el("p", { class: "aide", texte: "Texte affiché (tu peux le raccourcir) :" }), champ(c));
+    } else if (c.type === "fait" && c.libre) {
+      editeur.replaceChildren(champ(c));
+    } else editeur.replaceChildren();
+  };
+
+  const option = (cle, coche, contenuOption, choisir) => {
+    const radio = el("input", { type: "radio", name: groupe, id: `${groupe}-${cle}` });
+    radio.checked = coche;
+    const ligne = el("label", { class: "z-option", for: `${groupe}-${cle}` }, radio, el("div", {}, contenuOption));
+    const placer = () => { ligne.after(editeur); majEditeur(); };
+    radio.addEventListener("change", () => { choisir(); placer(); majInfo(); });
+    if (coche) queueMicrotask(placer);
+    return ligne;
+  };
+
+  const dessiner = () => {
+    const c = actuel();
+    const eq = prop.equipe;
+    const items = [
+      option("equipe", c.type === "equipe", [
+        el("strong", { texte: eq ? eq.titre : "Son équipe ce matin" }),
+        el("p", { class: "aide", texte: eq
+          ? `${eq.rang ? `${eq.rang.join("")} de ${eq.conference} · ` : ""}${eq.bilan} · ${eq.sous}`
+          : "Indisponible pour cette nuit : la zone restera vide." })],
+        () => { delete choix[nom]; }),
+      ...(prop.faits || []).map((f, i) => option(`fait${i}`,
+        c.type === "fait" && !c.libre && c.texte === f.texte, [
+          el("strong", {}, `Le fait · ${f.titre} `, el("span", { class: `pastille${f.suggere ? " fluo" : ""}`,
+            texte: f.suggere ? `suggéré · ${f.note}/10` : `${f.note}/10` })),
+          el("p", { texte: f.texte })],
+        () => { choix[nom] = { type: "fait", titre: f.titre, texte: f.texte }; })),
+      ...(candidats || []).map((q) => option(`cit-${q.id}`,
+        c.type === "citation" && c.id === q.id, [
+          el("strong", { texte: `Citation · ${q.orateur}${q.orateur !== nom && q.relation ? `, ${q.relation}` : ""}` }),
+          el("p", { texte: `« ${q.citation} »` }),
+          el("p", { class: "aide" }, q.match?.contexte_fr || jourCitation(q.publiee), " · ",
+            el("a", { href: q.lien, target: "_blank", rel: "noopener noreferrer", texte: "vérifier dans l'article" }))],
+        () => {
+          const lui = q.orateur === nom;
+          const moment = q.match?.contexte_fr || "";
+          choix[nom] = { type: "citation", id: q.id, texte: q.citation.slice(0, ZONE_MAX),
+            titre: lui ? "Il a dit" : "Ils parlent de lui",
+            auteur: lui ? q.orateur : `${q.orateur}${q.relation ? `, ${q.relation}` : ""}`,
+            contexte: moment.startsWith("Après") ? "après le match" : moment.startsWith("Avant") ? "avant le match" : "" };
+        })),
+      option("libre", c.type === "fait" && Boolean(c.libre), [el("strong", { texte: "Un fait écrit par toi" }),
+        el("p", { class: "aide", texte: `${ZONE_MAX} caractères au plus` })],
+        () => { choix[nom] = { type: "fait", libre: true, titre: "", texte: c.libre ? c.texte : "" }; }),
+      option("rien", c.type === "rien", [el("strong", { texte: "Rien" })], () => { choix[nom] = { type: "rien" }; }),
+    ];
+    const attente = candidats === null ? "Recherche des citations de la veille…"
+      : !candidats.length ? "Aucune citation de la veille sur lui autour de ce match." : null;
+    if (attente) items.splice(items.length - 2, 0, el("p", { class: "aide", texte: attente }));
+    options.replaceChildren(...items);
+  };
+  dessiner();
+  return {
+    nom,
+    noeud: el("div", { class: "carte z-carte" }, el("p", { class: "r-titre", texte: nom }), options),
+    citations: (liste) => { candidats = liste; dessiner(); },
+  };
 }
 
 /* --- les Bleus : la saison, les records, l'histoire --- */

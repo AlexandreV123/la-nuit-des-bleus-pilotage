@@ -271,3 +271,18 @@ details.plus .liste{margin-top:8px}
 
 /* Reel animé : fabriqué le matin, ou à la demande depuis la fiche de la nuit */
 .reel-anime .btn{margin-top:10px}
+
+/* le bas des cartes du Reel : choix par joueur */
+.zones-reel{margin:14px 0}
+.zones-reel .a-faire{color:var(--fluo)}
+.z-carte{margin-top:10px}
+.z-options{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.z-option{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:10px;background:var(--carte2);cursor:pointer}
+.z-option input{margin-top:3px;accent-color:var(--fluo)}
+.z-option strong{font-size:14px}
+.z-option p{font-size:14px;line-height:1.4;margin-top:3px}
+.z-option .pastille{margin-left:4px;white-space:nowrap;display:inline-block}
+.zones-reel > h2{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--gris);font-weight:700;margin:18px 0 4px}
+.z-edit{margin:2px 0 6px;display:flex;flex-direction:column;gap:4px}
+.z-option a{color:var(--fluo)}
+textarea.z-texte{min-height:90px}
