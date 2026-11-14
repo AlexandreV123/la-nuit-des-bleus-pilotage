@@ -268,3 +268,6 @@ details.plus .liste{margin-top:8px}
 .m-fin .m-ecarter{margin:0}
 .m-supprimer{display:block;margin:18px auto 96px;color:var(--rouge)}
 .m-fin .m-supprimer{margin:0}
+
+/* Reel animé : fabriqué le matin, ou à la demande depuis la fiche de la nuit */
+.reel-anime .btn{margin-top:10px}

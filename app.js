@@ -13,9 +13,10 @@ const API = "https://api.github.com";
 const WORKFLOW = "matin.yml";
 const REGLAGES = "reglages.yml";
 const CITATIONS = "citations.yml";
+const REEL = "reel.yml";
 const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation",
                veille: "ndb.veille", mercatoGen: "ndb.mercatoGen", mercatoVeille: "ndb.mercatoVeille",
-               mercatoEcartes: "ndb.mercatoEcartes", supprimes: "ndb.supprimes" };
+               mercatoEcartes: "ndb.mercatoEcartes", supprimes: "ndb.supprimes", reelGen: "ndb.reelGen" };
 const $app = document.getElementById("app");
 
 const etat = {
@@ -1132,6 +1133,7 @@ async function ecranNuit(nuit) {
       : null,
     publications().map(sectionPublication),
     (fiche.videos || []).map((v) => sectionVideo(nuit, v)),
+    /^\d{4}-\d{2}-\d{2}$/.test(nuit) && !fiche.publication ? blocReelAnime(nuit, fiche) : null,
     ["mercato", "citations"].includes(fiche.publication)
       ? el("button", { class: "lien m-supprimer", onclick: () => supprimerProduction(nuit,
           fiche.publication === "mercato" ? `le mouvement « ${fiche.titre} », sa fiche et sa slide` : `cette production (${fiche.titre || "citations"})`) },
@@ -1216,6 +1218,68 @@ function sectionVideo(nuit, v) {
       } }, "Copier la légende")),
     el("button", { class: "btn principal publier", onclick: publierVideo }, "Publier le Reel"),
     marque);
+}
+
+/* --- le Reel animé : fabriqué le matin juste après le carrousel (matin.yml), ou à la
+ * demande ici (reel.yml), par exemple si le lancement automatique n'est pas configuré.
+ * Le suivi attend que la fiche de la nuit porte un Reel animé plus récent que le lancement. */
+function blocReelAnime(nuit, fiche) {
+  const video = (fiche.videos || [])[0];
+  const anime = Boolean(video?.anime);
+  const zone = el("div", {});
+  const bouton = el("button", { class: anime ? "btn" : "btn principal" },
+    anime ? "Refaire le Reel animé" : "Fabriquer le Reel animé");
+  const enCours = () => { const g = lireJSON(CLES.reelGen, null); return g && g.nuit === nuit ? g : null; };
+
+  const suivre = async () => {
+    const g = enCours();
+    if (!g) return;
+    bouton.disabled = true;
+    if (Date.now() - g.depuis > 25 * 60e3) {
+      garder(CLES.reelGen, null);
+      bouton.disabled = false;
+      zone.replaceChildren(el("div", { class: "carte alerte" },
+        el("p", { texte: "Le Reel animé n'est pas arrivé après 25 minutes : regarde les derniers lancements dans ⚙." })));
+      return;
+    }
+    zone.replaceChildren(el("div", { class: "carte etat" },
+      el("div", { class: "etat-tete" }, el("span", { class: "voyant encours" }), el("strong", { texte: "Reel animé en fabrication…" })),
+      el("p", { class: "aide", texte: `Lancé à ${heureCourte(new Date(g.depuis).toISOString())}. Compte 5 à 12 minutes : tu recevras une notification, et cette fiche se mettra à jour.` })));
+    try {
+      const f = await (await contenu(`${nuit}/manifeste.json`)).json();
+      const v = (f.videos || [])[0];
+      if (v?.anime && v.genere_le && new Date(v.genere_le).getTime() >= g.depuis - 60e3) {
+        garder(CLES.reelGen, null);
+        toast("Le Reel animé est prêt !");
+        if (location.hash === `#/nuit/${nuit}`) ecranNuit(nuit);
+      }
+    } catch (x) { /* fiche pas encore republiée : on réessaiera */ }
+  };
+
+  bouton.addEventListener("click", async () => {
+    bouton.disabled = true;
+    try {
+      await gh(`/repos/${etat.depot}/actions/workflows/${REEL}/dispatches`,
+        { methode: "POST", corps: { ref: "main", inputs: { nuit } } });
+      garder(CLES.reelGen, JSON.stringify({ nuit, depuis: Date.now() }));
+      toast("Fabrication du Reel animé lancée");
+      suivre();
+    } catch (x) {
+      if (x.message !== "401") toast(`Lancement refusé : ${x.message}`);
+      bouton.disabled = false;
+    }
+  });
+
+  if (enCours()) suivre();
+  clearInterval(etat.minuterie);
+  etat.minuterie = setInterval(suivre, 30000);
+  return el("section", { class: "section reel-anime" },
+    el("h2", { texte: "Reel animé" }),
+    el("p", { class: "aide", texte: anime
+      ? "Le Reel ci-dessus est la version animée. Tu peux la refaire, par exemple après une correction des stats."
+      : "Le Reel ci-dessus est la version simple (diaporama). La version animée arrive d'habitude quelques minutes après le carrousel ; sinon, lance-la ici." }),
+    zone,
+    bouton);
 }
 
 /* --- les Bleus : la saison, les records, l'histoire --- */
