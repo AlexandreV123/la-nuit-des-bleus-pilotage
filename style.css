@@ -304,3 +304,8 @@ textarea.z-texte{min-height:90px}
 .ph-joueur{margin-top:12px}
 .ph-joueur > .aide{margin:0 0 8px}
 .ph-barre{position:sticky;bottom:14px;z-index:5;margin-top:18px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.ph-fichier{font-size:14px;color:var(--gris)}
+.ph-envoi{padding:12px 14px}
+.ph-envoi .r-titre{margin:0 0 2px}
+.ailleurs-choix{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0}
+.ailleurs-choix .bascule{margin:0}

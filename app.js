@@ -17,7 +17,7 @@ const REEL = "reel.yml";
 const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation",
                veille: "ndb.veille", mercatoGen: "ndb.mercatoGen", mercatoVeille: "ndb.mercatoVeille",
                mercatoEcartes: "ndb.mercatoEcartes", supprimes: "ndb.supprimes", reelGen: "ndb.reelGen",
-               photosEnvoi: "ndb.photosEnvoi" };
+               photosEnvoi: "ndb.photosEnvoi", photosAjout: "ndb.photosAjout" };
 const $app = document.getElementById("app");
 
 const etat = {
@@ -851,11 +851,18 @@ function cleLegende(pub) {
   return pub === "carrousel" || !f.legendes[pub] ? "base" : pub;
 }
 
+/** Le paragraphe « Ailleurs cette nuit » (un fait des matchs sans Français), retiré si
+ *  l'éditeur l'a écarté : il figure tel quel dans chaque légende (manifeste « ailleurs »). */
+function filtrerAilleurs(texte) {
+  const a = etat.fiche?.ailleurs;
+  return a && etat.sansAilleurs ? texte.replace(`\n\n${a}`, "") : texte;
+}
+
 /** La légende brute du matin pour la combinaison de choix et le ton retenus. */
 function legendeBrute(pub) {
   const f = etat.fiche, cle = cleLegende(pub);
-  if (etat.ton[pub] === "passionne" && f.legendes[`${cle}_passionne`]) return f.legendes[`${cle}_passionne`];
-  return f.legendes[cle] || "";
+  if (etat.ton[pub] === "passionne" && f.legendes[`${cle}_passionne`]) return filtrerAilleurs(f.legendes[`${cle}_passionne`]);
+  return filtrerAilleurs(f.legendes[cle] || "");
 }
 
 /** Sépare le dernier paragraphe s'il n'est fait que de hashtags. */
@@ -1022,6 +1029,23 @@ function enregistrer(fichiers) {
   }
 }
 
+/** Garder ou non le fait des autres matchs dans la légende (s'il y en a un cette nuit). */
+function choixAilleurs(pub) {
+  const a = etat.fiche?.ailleurs;
+  if (!a || !(etat.fiche.legendes[cleLegende(pub)] || "").includes(a)) return null;
+  const boutons = [[false, "Avec"], [true, "Sans"]].map(([sans, nom]) =>
+    el("button", { "aria-pressed": String(etat.sansAilleurs === sans), onclick: (e) => {
+      etat.sansAilleurs = sans;
+      e.currentTarget.parentElement.querySelectorAll("button")
+        .forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget)));
+      etat.legendeModifiee[pub] = false;
+      rafraichirLegende(pub);
+    } }, nom));
+  return el("div", { class: "ailleurs-choix" },
+    el("span", { class: "aide", texte: "Les autres matchs" }),
+    el("div", { class: "bascule ton", role: "group", "aria-label": "Fait des autres matchs" }, boutons));
+}
+
 function choixDuTon(pub) {
   const f = etat.fiche;
   if (!f.legendes[`${cleLegende(pub)}_passionne`] && !f.legendes.base_passionne) return null;
@@ -1074,7 +1098,7 @@ function sectionPublication(pub) {
       } }, "Rétablir")),
     el("div", { class: "defile", id: `apercu-${pub}` }),
     el("h2", { texte: "La légende", class: "sous-titre" }),
-    choixDuTon(pub), legende, pastillesHashtags(pub, legende),
+    choixDuTon(pub), choixAilleurs(pub), legende, pastillesHashtags(pub, legende),
     el("div", { class: "rangee" },
       el("button", { class: "btn", onclick: async () => {
         try { await navigator.clipboard.writeText(legende.value); toast("Légende copiée."); }
@@ -1103,7 +1127,7 @@ async function ecranNuit(nuit) {
   fiche.nuit = fiche.nuit || nuit;                  // une production n'a pas de date de nuit
   etat.fiche = fiche; etat.fichiers = {}; etat.urls = {}; etat.legendeModifiee = {};
   etat.choix = Object.fromEntries(fiche.choix.map((c) => [c.id, c.defaut !== false]));
-  etat.retirees = new Set(); etat.ton = {}; etat.tagsRetires = {};
+  etat.retirees = new Set(); etat.ton = {}; etat.tagsRetires = {}; etat.sansAilleurs = false;
   etat.ordre = {}; etat.ordreInitial = {};
   for (const pub of publications()) {
     etat.ordreInitial[pub] = fiche.images.filter((im) => pubDe(im) === pub).map((im) => im.fichier);
@@ -1154,7 +1178,7 @@ function sectionVideo(nuit, v) {
   const lecteur = el("video", { class: "reel-video", controls: true, playsinline: true, preload: "metadata" });
   const etatVideo = el("p", { class: "aide", texte: "Chargement de la vidéo…" });
   const legende = el("textarea", { id: `legende-${pub}`, spellcheck: "true" });
-  legende.value = etat.fiche.legendes[v.legende || "base"] || legendeCourante("carrousel");
+  legende.value = filtrerAilleurs(etat.fiche.legendes[v.legende || "base"] || "") || legendeCourante("carrousel");
   let fichier = null;
   const marque = el("button", { class: "lien-publiee" });
   const majMarque = () => {
@@ -2006,34 +2030,103 @@ function choixEnCours(index) {
   return enAttente;
 }
 
+/** La photo choisie dans la galerie, prête à partir : telle quelle si c'est un JPEG, PNG ou WebP
+ *  raisonnable (on garde la date de prise de vue écrite par l'appareil), sinon redessinée en JPEG
+ *  (photo HEIC d'iPhone, fichier énorme). */
+async function photoAEnvoyer(fichier) {
+  if (/^image\/(jpeg|png|webp)$/.test(fichier.type) && fichier.size <= 12e6) return fichier;
+  const image = await createImageBitmap(fichier);
+  const k = Math.min(1, 3000 / Math.max(image.width, image.height));
+  const toile = document.createElement("canvas");
+  toile.width = Math.round(image.width * k);
+  toile.height = Math.round(image.height * k);
+  toile.getContext("2d").drawImage(image, 0, 0, toile.width, toile.height);
+  return new Promise((ok) => toile.toBlob(ok, "image/jpeg", 0.92));
+}
+
+const enBase64 = (blob) => new Promise((ok, ko) => {
+  const lecteur = new FileReader();
+  lecteur.onload = () => ok(String(lecteur.result).split(",")[1]);
+  lecteur.onerror = ko;
+  lecteur.readAsDataURL(blob);
+});
+
 function formulaireAjout(index, recharger) {
   const f = { nba_id: "", url: "", credit: "", licence: "" };
   const joueurs = [["", "Choisir un Français…"],
     ...(index.joueurs || []).slice().sort((a, b) => a.nom.localeCompare(b.nom)).map((j) => [String(j.nba_id), `${j.nom} (${j.code})`])];
-  const bouton = el("button", { class: "btn principal" }, "Ajouter la photo");
+  const choisi = el("p", { class: "aide", texte: "Aucune photo choisie" });
+  const galerie = el("input", { type: "file", accept: "image/*", class: "ph-fichier" });
+  galerie.addEventListener("change", () => {
+    const x = galerie.files[0];
+    choisi.textContent = x ? `${x.name} · ${(x.size / 1e6).toFixed(1).replace(".", ",")} Mo` : "Aucune photo choisie";
+  });
+  const bouton = el("button", { class: "btn principal" }, "Envoyer la photo");
   bouton.addEventListener("click", async () => {
+    const fichier = galerie.files[0];
     const commons = /commons\.wikimedia\.org\/wiki\/File:/.test(f.url);
     if (!f.nba_id) return toast("Choisis le joueur");
-    if (!/^https:\/\//.test(f.url)) return toast("Colle le lien de la photo (https://…)");
-    if (!commons && !f.credit.trim()) return toast("Hors Wikimedia, le crédit du photographe est obligatoire");
+    if (!fichier && !/^https:\/\//.test(f.url)) return toast("Choisis une photo, ou colle son lien");
+    if (!commons && !f.credit.trim()) return toast("Indique le crédit : ton nom, ou celui du photographe");
     bouton.disabled = true;
+    let url = f.url.trim();
     try {
+      if (fichier) {
+        bouton.textContent = "Envoi de la photo…";
+        const pret = await photoAEnvoyer(fichier);
+        const ext = { "image/png": "png", "image/webp": "webp" }[pret.type] || "jpg";
+        const nom = `envoi-${Date.now()}.${ext}`;
+        try {
+          await gh(`/repos/${etat.depot}/contents/photos/depot/${nom}`, { methode: "PUT",
+            corps: { message: "Photo envoyée depuis l'appli", content: await enBase64(pret), branch: "contenus" } });
+        } catch (x) {
+          if (/40[34]/.test(x.message)) {
+            toast("Ton code d'accès ne permet pas l'envoi : il lui faut le droit « Contents » en lecture et écriture");
+            return;
+          }
+          throw x;
+        }
+        url = `depot:photos/depot/${nom}`;
+      }
+      bouton.textContent = "Détourage demandé…";
       await gh(`/repos/${etat.depot}/actions/workflows/${PHOTOS}/dispatches`, { methode: "POST", corps: { ref: "main",
-        inputs: { mode: "ajouter", url: f.url.trim(), nba_id: f.nba_id, credit: f.credit.trim(), licence: f.licence.trim() } } });
-      toast("Photo envoyée : elle arrive dans « Validées » d'ici 3 minutes");
-      setTimeout(() => { if (location.hash === "#/photos") recharger(); }, 180e3);
+        inputs: { mode: "ajouter", url, nba_id: f.nba_id, credit: f.credit.trim(), licence: f.licence.trim() } } });
+      garder(CLES.photosAjout, JSON.stringify({ depuis: Date.now() }));
+      toast("Photo envoyée : détourée d'ici 3 minutes");
+      recharger();
     } catch (x) { if (x.message !== "401") toast(`Envoi refusé : ${x.message}`); }
-    bouton.disabled = false;
+    finally { bouton.disabled = false; bouton.textContent = "Envoyer la photo"; }
   });
-  return el("details", { class: "plus" }, el("summary", { texte: "Ajouter une photo" }),
+  return el("details", { class: "plus", open: true }, el("summary", { texte: "Envoyer une photo" }),
     el("div", { class: "m-bloc" },
-      el("p", { class: "aide", texte: "Une page Wikimedia Commons apporte elle-même l'auteur, la licence et la date. Pour une autre photo, il te faut l'accord du photographe et son nom pour le crédit." }),
+      el("p", { class: "aide", texte: "Choisis une photo dans ta galerie, telle quelle : le détourage et le cadrage sont faits ensuite, et la photo entre directement dans la rotation. Uniquement tes propres photos, ou celles d'un photographe qui t'a donné son accord." }),
       champMvt("Joueur", listeDeroulante(joueurs, "", (v) => (f.nba_id = v))),
-      champMvt("Lien de la photo", saisie("url", "", { placeholder: "https://commons.wikimedia.org/wiki/File:…" }, (v) => (f.url = v))),
-      champMvt("Crédit (hors Wikimedia)", saisie("text", "", { placeholder: "Nom du photographe" }, (v) => (f.credit = v))),
-      champMvt("Licence (hors Wikimedia)", saisie("text", "", { placeholder: "« avec accord », CC BY…" }, (v) => (f.licence = v))),
-      el("p", { class: "aide", texte: "Le visage doit être net et de face, sans autre joueur au premier plan : sinon la photo est refusée." }),
+      champMvt("Photo", galerie, choisi),
+      champMvt("Crédit", saisie("text", "", { placeholder: "Ton nom, ou celui du photographe" }, (v) => (f.credit = v))),
+      el("details", { class: "plus" }, el("summary", { texte: "Ou par un lien (Wikimedia Commons…)" }),
+        el("div", { class: "m-bloc" },
+          champMvt("Lien de la photo", saisie("url", "", { placeholder: "https://commons.wikimedia.org/wiki/File:…" }, (v) => (f.url = v))),
+          champMvt("Licence (hors Wikimedia)", saisie("text", "", { placeholder: "« avec accord », CC BY…" }, (v) => (f.licence = v))),
+          el("p", { class: "aide", texte: "Une page Wikimedia Commons apporte elle-même l'auteur, la licence et la date : le crédit n'est alors pas nécessaire." }))),
+      el("p", { class: "aide", texte: "Le visage doit être net, sans autre joueur au premier plan, et la photo de moins de 2 ans (et pas d'avant son arrivée dans l'équipe) : sinon elle est refusée, avec la raison ci-dessous." }),
       bouton));
+}
+
+/** Les derniers envois, gardés ou refusés (avec la raison), et celui en cours de détourage. */
+function blocEnvois(index) {
+  const ajouts = (index.ajouts || []).slice().reverse().slice(0, 5);
+  const enCours = lireJSON(CLES.photosAjout, null);
+  let attente = null;
+  if (enCours) {
+    const arrive = (index.ajouts || []).some((a) => new Date(a.quand).getTime() >= enCours.depuis - 60e3);
+    if (arrive || Date.now() - enCours.depuis > 10 * 60e3) garder(CLES.photosAjout, null);
+    else attente = carteEnCours("Détourage en cours…", "La photo arrive dans « Validées » d'ici 3 minutes, ou ci-dessous avec la raison si elle est refusée.");
+  }
+  if (!ajouts.length && !attente) return null;
+  return el("section", { class: "section" }, el("h2", { texte: "Derniers envois" }), attente,
+    ajouts.length ? el("div", { class: "liste" }, ajouts.map((a) => el("div", { class: "carte ph-envoi" },
+      el("p", { class: "r-titre", texte: `${a.ok ? "Gardée ✓" : "Refusée"} · ${a.joueur}` }),
+      el("p", { class: "aide", texte: `${quandCourt(a.quand)} · ${a.ok ? "dans la rotation" : a.raison}` })))) : null);
 }
 
 async function ecranPhotos() {
@@ -2091,9 +2184,10 @@ async function ecranPhotos() {
         el("p", { class: "aide", texte: `${nom} · ${pluriel(liste.length, "photo")} + le portrait officiel, à tour de rôle` }),
         el("div", { class: "ph-grille" }, liste.map((p) => cartePhoto(p, choix, majBarre)))))
         : el("p", { class: "aide", texte: "Aucune photo validée : le carrousel garde les portraits officiels." })),
+    blocEnvois(index),
     formulaireAjout(index, ecranPhotos),
     barre);
-  if (Object.keys(envoyes).length) etat.minuterie = setInterval(ecranPhotos, 30000);
+  if (Object.keys(envoyes).length || lireJSON(CLES.photosAjout, null)) etat.minuterie = setInterval(ecranPhotos, 30000);
 }
 
 function router() {
