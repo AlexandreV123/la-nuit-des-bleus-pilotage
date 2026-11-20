@@ -17,7 +17,8 @@ const REEL = "reel.yml";
 const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation",
                veille: "ndb.veille", mercatoGen: "ndb.mercatoGen", mercatoVeille: "ndb.mercatoVeille",
                mercatoEcartes: "ndb.mercatoEcartes", supprimes: "ndb.supprimes", reelGen: "ndb.reelGen",
-               photosEnvoi: "ndb.photosEnvoi", photosAjout: "ndb.photosAjout" };
+               photosEnvoi: "ndb.photosEnvoi", photosAjout: "ndb.photosAjout",
+               photosCredit: "ndb.photosCredit" };
 const $app = document.getElementById("app");
 
 const etat = {
@@ -2051,76 +2052,109 @@ const enBase64 = (blob) => new Promise((ok, ko) => {
   lecteur.readAsDataURL(blob);
 });
 
+/** Un bloc de l'envoi groupé : un joueur et ses photos (plusieurs à la fois). */
+function blocLot(joueurs, lot, rendre) {
+  const galerie = el("input", { type: "file", accept: "image/*", multiple: true, class: "ph-fichier" });
+  const resume = el("p", { class: "aide", texte: lot.fichiers.length ? pluriel(lot.fichiers.length, "photo") + " choisie" + (lot.fichiers.length > 1 ? "s" : "") : "Aucune photo choisie" });
+  galerie.addEventListener("change", () => {
+    lot.fichiers = [...lot.fichiers, ...galerie.files];
+    galerie.value = "";
+    rendre();
+  });
+  return el("div", { class: "carte ph-lot" },
+    el("div", { class: "ph-lot-tete" },
+      listeDeroulante(joueurs, lot.nba_id, (v) => (lot.nba_id = v)),
+      el("button", { class: "lien", "aria-label": "Retirer ce joueur", onclick: () => { lot.retire = true; rendre(); } }, "Retirer")),
+    el("label", { class: "btn mini-b ph-choisir" }, "Choisir des photos", galerie),
+    resume,
+    lot.fichiers.length ? el("div", { class: "ph-noms" }, lot.fichiers.map((f, i) => el("span", { class: "pastille" },
+      f.name.length > 22 ? f.name.slice(0, 20) + "…" : f.name,
+      el("button", { class: "lien", "aria-label": `Retirer ${f.name}`, onclick: () => { lot.fichiers.splice(i, 1); rendre(); } }, " ✕")))) : null);
+}
+
 function formulaireAjout(index, recharger) {
-  const f = { nba_id: "", url: "", credit: "", licence: "" };
   const joueurs = [["", "Choisir un Français…"],
     ...(index.joueurs || []).slice().sort((a, b) => a.nom.localeCompare(b.nom)).map((j) => [String(j.nba_id), `${j.nom} (${j.code})`])];
-  const choisi = el("p", { class: "aide", texte: "Aucune photo choisie" });
-  const galerie = el("input", { type: "file", accept: "image/*", class: "ph-fichier" });
-  galerie.addEventListener("change", () => {
-    const x = galerie.files[0];
-    choisi.textContent = x ? `${x.name} · ${(x.size / 1e6).toFixed(1).replace(".", ",")} Mo` : "Aucune photo choisie";
-  });
-  const bouton = el("button", { class: "btn principal" }, "Envoyer la photo");
+  const reglage = lireJSON(CLES.photosCredit, { credit: "", licence: "" });
+  const lots = [{ nba_id: "", fichiers: [] }];
+  const lien = { url: "", nba_id: "" };
+  const zone = el("div", { class: "m-bloc" });
+  const bouton = el("button", { class: "btn principal" }, "Tout envoyer");
+  const rendre = () => {
+    for (let i = lots.length - 1; i >= 0; i--) if (lots[i].retire) lots.splice(i, 1);
+    if (!lots.length) lots.push({ nba_id: "", fichiers: [] });
+    const n = lots.reduce((s, l) => s + l.fichiers.length, 0);
+    bouton.textContent = n > 1 ? `Envoyer les ${n} photos` : "Tout envoyer";
+    zone.replaceChildren(...lots.map((l) => blocLot(joueurs, l, rendre)),
+      el("button", { class: "btn", onclick: () => { lots.push({ nba_id: "", fichiers: [] }); rendre(); } }, "+ Un autre joueur"));
+  };
+  rendre();
   bouton.addEventListener("click", async () => {
-    const fichier = galerie.files[0];
-    const commons = /commons\.wikimedia\.org\/wiki\/File:/.test(f.url);
-    if (!f.nba_id) return toast("Choisis le joueur");
-    if (!fichier && !/^https:\/\//.test(f.url)) return toast("Choisis une photo, ou colle son lien");
-    if (!commons && !f.credit.trim()) return toast("Indique le crédit : ton nom, ou celui du photographe");
+    const pleins = lots.filter((l) => l.fichiers.length);
+    const commons = /commons\.wikimedia\.org\/wiki\/File:/.test(lien.url);
+    if (pleins.some((l) => !l.nba_id) || (lien.url && !lien.nba_id)) return toast("Choisis le joueur de chaque bloc");
+    if (!pleins.length && !/^https:\/\//.test(lien.url)) return toast("Choisis au moins une photo, ou colle un lien");
+    if ((pleins.length || (lien.url && !commons)) && !reglage.credit.trim()) return toast("Indique le crédit des photos");
+    garder(CLES.photosCredit, JSON.stringify(reglage));
     bouton.disabled = true;
-    let url = f.url.trim();
+    const lot = [];
     try {
-      if (fichier) {
-        bouton.textContent = "Envoi de la photo…";
-        const pret = await photoAEnvoyer(fichier);
-        const ext = { "image/png": "png", "image/webp": "webp" }[pret.type] || "jpg";
-        const nom = `envoi-${Date.now()}.${ext}`;
-        try {
-          await gh(`/repos/${etat.depot}/contents/photos/depot/${nom}`, { methode: "PUT",
-            corps: { message: "Photo envoyée depuis l'appli", content: await enBase64(pret), branch: "contenus" } });
-        } catch (x) {
-          if (/40[34]/.test(x.message)) {
-            toast("Ton code d'accès ne permet pas l'envoi : il lui faut le droit « Contents » en lecture et écriture");
-            return;
+      const total = pleins.reduce((s, l) => s + l.fichiers.length, 0);
+      let rang = 0;
+      for (const l of pleins) {
+        for (const fichier of l.fichiers) {
+          rang += 1;
+          bouton.textContent = `Envoi ${rang}/${total}…`;
+          const pret = await photoAEnvoyer(fichier);
+          const ext = { "image/png": "png", "image/webp": "webp" }[pret.type] || "jpg";
+          const nom = `envoi-${Date.now()}-${rang}.${ext}`;
+          try {
+            await gh(`/repos/${etat.depot}/contents/photos/depot/${nom}`, { methode: "PUT",
+              corps: { message: "Photo envoyée depuis l'appli", content: await enBase64(pret), branch: "contenus" } });
+          } catch (x) {
+            if (/40[34]/.test(x.message)) {
+              toast("Ton code d'accès ne permet pas l'envoi : il lui faut le droit « Contents » en lecture et écriture");
+              return;
+            }
+            throw x;
           }
-          throw x;
+          lot.push({ url: `depot:photos/depot/${nom}`, nba_id: l.nba_id, credit: reglage.credit.trim(), licence: reglage.licence.trim() });
         }
-        url = `depot:photos/depot/${nom}`;
       }
+      if (lien.url) lot.push({ url: lien.url.trim(), nba_id: lien.nba_id, credit: reglage.credit.trim(), licence: reglage.licence.trim() });
       bouton.textContent = "Détourage demandé…";
       await gh(`/repos/${etat.depot}/actions/workflows/${PHOTOS}/dispatches`, { methode: "POST", corps: { ref: "main",
-        inputs: { mode: "ajouter", url, nba_id: f.nba_id, credit: f.credit.trim(), licence: f.licence.trim() } } });
-      garder(CLES.photosAjout, JSON.stringify({ depuis: Date.now() }));
-      toast("Photo envoyée : détourée d'ici 3 minutes");
+        inputs: { mode: "ajouter", lot: JSON.stringify(lot) } } });
+      garder(CLES.photosAjout, JSON.stringify({ depuis: Date.now(), n: lot.length }));
+      toast(`${pluriel(lot.length, "photo")} envoyée${lot.length > 1 ? "s" : ""} : détourage en cours`);
       recharger();
-    } catch (x) { if (x.message !== "401") toast(`Envoi refusé : ${x.message}`); }
-    finally { bouton.disabled = false; bouton.textContent = "Envoyer la photo"; }
+    } catch (x) { if (x.message !== "401") toast(`Envoi interrompu : ${x.message}`); }
+    finally { bouton.disabled = false; bouton.textContent = "Tout envoyer"; }
   });
-  return el("details", { class: "plus", open: true }, el("summary", { texte: "Envoyer une photo" }),
+  return el("details", { class: "plus", open: true }, el("summary", { texte: "Envoyer des photos" }),
     el("div", { class: "m-bloc" },
-      el("p", { class: "aide", texte: "Choisis une photo dans ta galerie, telle quelle : le détourage et le cadrage sont faits ensuite, et la photo entre directement dans la rotation. Uniquement tes propres photos, ou celles d'un photographe qui t'a donné son accord." }),
-      champMvt("Joueur", listeDeroulante(joueurs, "", (v) => (f.nba_id = v))),
-      champMvt("Photo", galerie, choisi),
-      champMvt("Crédit", saisie("text", "", { placeholder: "Ton nom, ou celui du photographe" }, (v) => (f.credit = v))),
+      el("p", { class: "aide", texte: "Choisis un joueur, puis une ou plusieurs photos de ta galerie, telles quelles ; ajoute d'autres joueurs si tu veux. Tout part en une fois : détourage, cadrage, et les photos entrent directement dans la rotation." }),
+      champMvt("Crédit (pour toutes les photos)", saisie("text", reglage.credit, { placeholder: "Ex. : Nathaniel S. Butler / NBAE via Getty Images" }, (v) => (reglage.credit = v))),
+      champMvt("Licence (facultatif)", saisie("text", reglage.licence, { placeholder: "Ex. : Getty Images, licence éditoriale" }, (v) => (reglage.licence = v))),
+      zone,
       el("details", { class: "plus" }, el("summary", { texte: "Ou par un lien (Wikimedia Commons…)" }),
         el("div", { class: "m-bloc" },
-          champMvt("Lien de la photo", saisie("url", "", { placeholder: "https://commons.wikimedia.org/wiki/File:…" }, (v) => (f.url = v))),
-          champMvt("Licence (hors Wikimedia)", saisie("text", "", { placeholder: "« avec accord », CC BY…" }, (v) => (f.licence = v))),
-          el("p", { class: "aide", texte: "Une page Wikimedia Commons apporte elle-même l'auteur, la licence et la date : le crédit n'est alors pas nécessaire." }))),
-      el("p", { class: "aide", texte: "Le visage doit être net, sans autre joueur au premier plan, et la photo de moins de 2 ans (et pas d'avant son arrivée dans l'équipe) : sinon elle est refusée, avec la raison ci-dessous." }),
+          champMvt("Joueur", listeDeroulante(joueurs, "", (v) => (lien.nba_id = v))),
+          champMvt("Lien de la photo", saisie("url", "", { placeholder: "https://commons.wikimedia.org/wiki/File:…" }, (v) => (lien.url = v))),
+          el("p", { class: "aide", texte: "Une page Wikimedia Commons apporte elle-même l'auteur, la licence et la date." }))),
+      el("p", { class: "aide", texte: "Envoie le fichier en grand format (pas l'aperçu d'un site) : il faut un visage net d'au moins 150 pixels, sans autre joueur au premier plan, et une photo de moins de 2 ans, pas d'avant l'arrivée du joueur dans son équipe." }),
       bouton));
 }
 
-/** Les derniers envois, gardés ou refusés (avec la raison), et celui en cours de détourage. */
+/** Les derniers envois, gardés ou refusés (avec la raison), et le lot en cours de détourage. */
 function blocEnvois(index) {
-  const ajouts = (index.ajouts || []).slice().reverse().slice(0, 5);
+  const ajouts = (index.ajouts || []).slice().reverse().slice(0, 10);
   const enCours = lireJSON(CLES.photosAjout, null);
   let attente = null;
   if (enCours) {
-    const arrive = (index.ajouts || []).some((a) => new Date(a.quand).getTime() >= enCours.depuis - 60e3);
-    if (arrive || Date.now() - enCours.depuis > 10 * 60e3) garder(CLES.photosAjout, null);
-    else attente = carteEnCours("Détourage en cours…", "La photo arrive dans « Validées » d'ici 3 minutes, ou ci-dessous avec la raison si elle est refusée.");
+    const arrives = (index.ajouts || []).filter((a) => new Date(a.quand).getTime() >= enCours.depuis - 60e3).length;
+    if (arrives >= (enCours.n || 1) || Date.now() - enCours.depuis > 30 * 60e3) garder(CLES.photosAjout, null);
+    else attente = carteEnCours("Détourage en cours…", `${pluriel(enCours.n || 1, "photo")} : une dizaine de secondes chacune, plus 2 minutes de démarrage. La liste se met à jour toute seule.`);
   }
   if (!ajouts.length && !attente) return null;
   return el("section", { class: "section" }, el("h2", { texte: "Derniers envois" }), attente,
