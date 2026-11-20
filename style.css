@@ -317,3 +317,4 @@ textarea.z-texte{min-height:90px}
 .ph-noms{display:flex;flex-wrap:wrap;gap:6px}
 .ph-noms .pastille{text-transform:none;letter-spacing:0}
 .ph-noms .lien{padding:0;font-size:12px}
+.ph-ia{align-self:flex-start;font-size:10px;padding:3px 8px}

@@ -2012,6 +2012,7 @@ function cartePhoto(p, choix, majBarre) {
   boutonEcarter.addEventListener("click", () => basculer("refusee"));
   carte.append(img,
     el("p", { class: "r-titre", texte: p.joueur }),
+    ...(p.agrandie ? [el("span", { class: "pastille orange ph-ia", texte: "Agrandie par IA" })] : []),
     el("p", { class: "ph-meta" }, `${dateCourte(p.date)} · ${p.licence}`, el("br"), `Photo : ${p.auteur}`, el("br"),
       p.page ? el("a", { href: p.page, target: "_blank", rel: "noopener noreferrer", texte: "Voir la source" }) : null),
     el("div", { class: "ph-boutons" }, boutonGarder, boutonEcarter));
@@ -2146,21 +2147,30 @@ function formulaireAjout(index, recharger) {
       bouton));
 }
 
-/** Les derniers envois, gardés ou refusés (avec la raison), et le lot en cours de détourage. */
+/** Les derniers envois, gardés ou refusés (avec la raison), et le lot en cours : son avancement
+ *  (index.envoi, écrit par photos.yml à chaque étape) s'affiche dans le bloc de chargement. */
 function blocEnvois(index) {
   const ajouts = (index.ajouts || []).slice().reverse().slice(0, 10);
   const enCours = lireJSON(CLES.photosAjout, null);
   let attente = null;
   if (enCours) {
-    const arrives = (index.ajouts || []).filter((a) => new Date(a.quand).getTime() >= enCours.depuis - 60e3).length;
-    if (arrives >= (enCours.n || 1) || Date.now() - enCours.depuis > 30 * 60e3) garder(CLES.photosAjout, null);
-    else attente = carteEnCours("Détourage en cours…", `${pluriel(enCours.n || 1, "photo")} : une dizaine de secondes chacune, plus 2 minutes de démarrage. La liste se met à jour toute seule.`);
+    const e = index.envoi;
+    const recent = e && new Date(e.debut || 0).getTime() >= enCours.depuis - 120e3;
+    if ((recent && e.fin) || Date.now() - enCours.depuis > 45 * 60e3) {
+      garder(CLES.photosAjout, null);
+      if (recent && e.fin) toast(e.etape);
+    } else if (recent) {
+      attente = carteEnCours(`Photo ${Math.min(e.faites + 1, e.total)}/${e.total}`,
+        `${e.etape} Les photos prêtes apparaissent au fur et à mesure.`);
+    } else {
+      attente = carteEnCours("Démarrage…", `${pluriel(enCours.n || 1, "photo")} envoyée${(enCours.n || 1) > 1 ? "s" : ""}. Le traitement démarre (1 à 2 minutes), puis chaque photo prête apparaît ici. Celles à agrandir par IA passent en dernier.`);
+    }
   }
   if (!ajouts.length && !attente) return null;
   return el("section", { class: "section" }, el("h2", { texte: "Derniers envois" }), attente,
     ajouts.length ? el("div", { class: "liste" }, ajouts.map((a) => el("div", { class: "carte ph-envoi" },
-      el("p", { class: "r-titre", texte: `${a.ok ? "Gardée ✓" : "Refusée"} · ${a.joueur}` }),
-      el("p", { class: "aide", texte: `${quandCourt(a.quand)} · ${a.ok ? "dans la rotation" : a.raison}` })))) : null);
+      el("p", { class: "r-titre", texte: `${a.ok ? (a.agrandie ? "Agrandie par IA" : "Gardée ✓") : "Refusée"} · ${a.joueur}` }),
+      el("p", { class: "aide", texte: `${quandCourt(a.quand)} · ${a.ok ? (a.agrandie ? "à valider ci-dessus" : "dans la rotation") : a.raison}` })))) : null);
 }
 
 async function ecranPhotos() {
@@ -2210,6 +2220,7 @@ async function ecranPhotos() {
         el("p", { class: "aide", texte: index.verifie_le ? `Dernière veille : ${quandCourt(index.verifie_le)}` : "Pas encore de veille" }),
         el("p", { class: "aide", texte: "Wikimedia Commons, moins de 2 ans, jamais avant l'arrivée du joueur dans son équipe. Chaque lundi." })),
       veille),
+    blocEnvois(index),
     el("section", { class: "section" }, el("h2", { texte: "À valider" }),
       aValider.length ? el("div", { class: "ph-grille" }, aValider.map((p) => cartePhoto(p, choix, majBarre)))
         : el("p", { class: "aide", texte: "Rien à valider. Les photos trouvées arrivent ici, avec une notification." })),
@@ -2218,10 +2229,15 @@ async function ecranPhotos() {
         el("p", { class: "aide", texte: `${nom} · ${pluriel(liste.length, "photo")} + le portrait officiel, à tour de rôle` }),
         el("div", { class: "ph-grille" }, liste.map((p) => cartePhoto(p, choix, majBarre)))))
         : el("p", { class: "aide", texte: "Aucune photo validée : le carrousel garde les portraits officiels." })),
-    blocEnvois(index),
     formulaireAjout(index, ecranPhotos),
     barre);
-  if (Object.keys(envoyes).length || lireJSON(CLES.photosAjout, null)) etat.minuterie = setInterval(ecranPhotos, 30000);
+  // pendant un envoi ou des choix en attente : on recharge, sauf si l'éditeur est en train
+  // de faire des choix ou de préparer un envoi (on ne veut pas effacer sa saisie)
+  if (Object.keys(envoyes).length || lireJSON(CLES.photosAjout, null)) {
+    etat.minuterie = setInterval(() => {
+      if (!Object.keys(choix).length && !document.querySelector(".ph-noms")) ecranPhotos();
+    }, 15000);
+  }
 }
 
 function router() {
