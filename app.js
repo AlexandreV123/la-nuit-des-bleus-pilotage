@@ -1418,7 +1418,7 @@ function carteZone(nom, prop, choix, majInfo) {
           const lui = q.orateur === nom;
           const moment = q.match?.contexte_fr || "";
           choix[nom] = { type: "citation", id: q.id, texte: q.citation.slice(0, ZONE_MAX),
-            titre: lui ? "Il a dit" : "Ils parlent de lui",
+            titre: "La décla",
             auteur: lui ? q.orateur : `${q.orateur}${q.relation ? `, ${q.relation}` : ""}`,
             contexte: moment.startsWith("Après") ? "après le match" : moment.startsWith("Avant") ? "avant le match" : "" };
         })),
