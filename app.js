@@ -16,7 +16,8 @@ const CITATIONS = "citations.yml";
 const REEL = "reel.yml";
 const CLES = { jeton: "ndb.jeton", depot: "ndb.depot", publie: "ndb.publie", generation: "ndb.generation",
                veille: "ndb.veille", mercatoGen: "ndb.mercatoGen", mercatoVeille: "ndb.mercatoVeille",
-               mercatoEcartes: "ndb.mercatoEcartes", supprimes: "ndb.supprimes", reelGen: "ndb.reelGen" };
+               mercatoEcartes: "ndb.mercatoEcartes", supprimes: "ndb.supprimes", reelGen: "ndb.reelGen",
+               photosEnvoi: "ndb.photosEnvoi" };
 const $app = document.getElementById("app");
 
 const etat = {
@@ -231,6 +232,7 @@ async function ecranListe() {
     el("button", { class: "icone texte", "aria-label": "Citations", onclick: () => (location.hash = "#/citations") }, "Citations"),
     el("button", { class: "icone texte", "aria-label": "Mercato", onclick: () => (location.hash = "#/mercato") }, "Mercato"),
     el("button", { class: "icone texte", "aria-label": "Les Bleus", onclick: () => (location.hash = "#/bleus") }, "Bleus"),
+    el("button", { class: "icone texte", "aria-label": "Photos", onclick: () => (location.hash = "#/photos") }, "Photos"),
     el("button", { class: "icone", "aria-label": "Réglages", onclick: () => (location.hash = "#/relancer") }, "⚙"));
   const tete = entete("La nuit des Bleus", "Pilotage", { droite: boutons });
   afficher(tete, el("p", { class: "aide", texte: "Chargement…" }));
@@ -1945,6 +1947,155 @@ function ecranRelancer() {
 
 /* ------------------------------------------------------------------ routage */
 
+/* --- la banque de photos ---
+ * Photos libres (Wikimedia Commons) trouvées chaque lundi, détourées au cadrage du portrait
+ * officiel. Elles arrivent « à valider » ; les choix s'accumulent à l'écran et partent
+ * ensemble (photos.yml, mode decider). Seules les photos validées entrent dans la rotation
+ * du carrousel du matin, et le crédit du photographe part dans la légende. */
+const PHOTOS = "photos.yml";
+const urlsPhotos = {};
+
+async function imagePhoto(p, img) {
+  if (!urlsPhotos[p.fichier]) {
+    try { urlsPhotos[p.fichier] = URL.createObjectURL(await (await contenu(p.fichier)).blob()); }
+    catch (x) { return; }
+  }
+  img.src = urlsPhotos[p.fichier];
+}
+
+const dateCourte = (iso) => (iso ? new Date(`${iso}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : "date inconnue");
+
+function cartePhoto(p, choix, majBarre) {
+  const img = el("img", { class: "ph-img", alt: `Photo de ${p.joueur}` });
+  imagePhoto(p, img);
+  const carte = el("div", { class: "carte ph-carte" });
+  const etatDe = () => choix[p.id] || p.statut;
+  const boutonGarder = el("button", { class: "btn mini-b" });
+  const boutonEcarter = el("button", { class: "btn mini-b" });
+  const rendre = () => {
+    carte.className = `carte ph-carte ${etatDe()}${choix[p.id] ? " modifiee" : ""}`;
+    boutonGarder.textContent = etatDe() === "validee" ? "Gardée ✓" : "Garder";
+    boutonEcarter.textContent = etatDe() === "refusee" ? "Écartée" : (p.statut === "validee" ? "Retirer" : "Écarter");
+  };
+  const basculer = (valeur) => {
+    if (choix[p.id] === valeur || p.statut === valeur) delete choix[p.id];
+    else choix[p.id] = valeur;
+    rendre();
+    majBarre();
+  };
+  boutonGarder.addEventListener("click", () => basculer("validee"));
+  boutonEcarter.addEventListener("click", () => basculer("refusee"));
+  carte.append(img,
+    el("p", { class: "r-titre", texte: p.joueur }),
+    el("p", { class: "ph-meta" }, `${dateCourte(p.date)} · ${p.licence}`, el("br"), `Photo : ${p.auteur}`, el("br"),
+      p.page ? el("a", { href: p.page, target: "_blank", rel: "noopener noreferrer", texte: "Voir la source" }) : null),
+    el("div", { class: "ph-boutons" }, boutonGarder, boutonEcarter));
+  rendre();
+  return carte;
+}
+
+/** Les choix envoyés : on les montre tant que l'index ne les a pas enregistrés. */
+function choixEnCours(index) {
+  const e = lireJSON(CLES.photosEnvoi, null);
+  if (!e) return {};
+  const enAttente = Object.fromEntries(Object.entries(e.choix || {}).filter(([id, s]) => {
+    const p = (index.photos || []).find((x) => x.id === id);
+    return p ? p.statut !== s : s !== "refusee";
+  }));
+  if (!Object.keys(enAttente).length || Date.now() - e.depuis > 15 * 60e3) { garder(CLES.photosEnvoi, null); return {}; }
+  return enAttente;
+}
+
+function formulaireAjout(index, recharger) {
+  const f = { nba_id: "", url: "", credit: "", licence: "" };
+  const joueurs = [["", "Choisir un Français…"],
+    ...(index.joueurs || []).slice().sort((a, b) => a.nom.localeCompare(b.nom)).map((j) => [String(j.nba_id), `${j.nom} (${j.code})`])];
+  const bouton = el("button", { class: "btn principal" }, "Ajouter la photo");
+  bouton.addEventListener("click", async () => {
+    const commons = /commons\.wikimedia\.org\/wiki\/File:/.test(f.url);
+    if (!f.nba_id) return toast("Choisis le joueur");
+    if (!/^https:\/\//.test(f.url)) return toast("Colle le lien de la photo (https://…)");
+    if (!commons && !f.credit.trim()) return toast("Hors Wikimedia, le crédit du photographe est obligatoire");
+    bouton.disabled = true;
+    try {
+      await gh(`/repos/${etat.depot}/actions/workflows/${PHOTOS}/dispatches`, { methode: "POST", corps: { ref: "main",
+        inputs: { mode: "ajouter", url: f.url.trim(), nba_id: f.nba_id, credit: f.credit.trim(), licence: f.licence.trim() } } });
+      toast("Photo envoyée : elle arrive dans « Validées » d'ici 3 minutes");
+      setTimeout(() => { if (location.hash === "#/photos") recharger(); }, 180e3);
+    } catch (x) { if (x.message !== "401") toast(`Envoi refusé : ${x.message}`); }
+    bouton.disabled = false;
+  });
+  return el("details", { class: "plus" }, el("summary", { texte: "Ajouter une photo" }),
+    el("div", { class: "m-bloc" },
+      el("p", { class: "aide", texte: "Une page Wikimedia Commons apporte elle-même l'auteur, la licence et la date. Pour une autre photo, il te faut l'accord du photographe et son nom pour le crédit." }),
+      champMvt("Joueur", listeDeroulante(joueurs, "", (v) => (f.nba_id = v))),
+      champMvt("Lien de la photo", saisie("url", "", { placeholder: "https://commons.wikimedia.org/wiki/File:…" }, (v) => (f.url = v))),
+      champMvt("Crédit (hors Wikimedia)", saisie("text", "", { placeholder: "Nom du photographe" }, (v) => (f.credit = v))),
+      champMvt("Licence (hors Wikimedia)", saisie("text", "", { placeholder: "« avec accord », CC BY…" }, (v) => (f.licence = v))),
+      el("p", { class: "aide", texte: "Le visage doit être net et de face, sans autre joueur au premier plan : sinon la photo est refusée." }),
+      bouton));
+}
+
+async function ecranPhotos() {
+  clearInterval(etat.minuterie);
+  afficher(entete("Photos", "Chargement…", { retour: true }), el("p", { class: "aide", texte: "Chargement…" }));
+  let index = { photos: [] };
+  try { index = await (await contenu("photos/index.json")).json(); }
+  catch (x) { if (x.message === "401") return; }
+  const envoyes = choixEnCours(index);
+  const photos = (index.photos || []).map((p) => (envoyes[p.id] ? { ...p, statut: envoyes[p.id] } : p));
+  const aValider = photos.filter((p) => p.statut === "a_valider");
+  const validees = photos.filter((p) => p.statut === "validee");
+  const choix = {};
+  const barre = el("button", { class: "btn principal ph-barre" });
+  const majBarre = () => {
+    const n = Object.keys(choix).length;
+    barre.style.display = n ? "" : "none";        // .btn impose display:flex : [hidden] ne suffit pas
+    barre.textContent = `Enregistrer ${n} choix`;
+  };
+  barre.addEventListener("click", async () => {
+    barre.disabled = true;
+    try {
+      await gh(`/repos/${etat.depot}/actions/workflows/${PHOTOS}/dispatches`,
+        { methode: "POST", corps: { ref: "main", inputs: { mode: "decider", decisions: JSON.stringify(choix) } } });
+      garder(CLES.photosEnvoi, JSON.stringify({ depuis: Date.now(), choix: { ...envoyes, ...choix } }));
+      toast("Choix enregistrés");
+      ecranPhotos();
+    } catch (x) { if (x.message !== "401") toast(`Envoi refusé : ${x.message}`); barre.disabled = false; }
+  });
+  majBarre();
+  const veille = el("button", { class: "btn" }, "Lancer une veille");
+  veille.addEventListener("click", async () => {
+    veille.disabled = true;
+    try {
+      await gh(`/repos/${etat.depot}/actions/workflows/${PHOTOS}/dispatches`,
+        { methode: "POST", corps: { ref: "main", inputs: { mode: "veille" } } });
+      toast("Veille lancée : 5 à 15 minutes, une notification arrivera s'il y a du neuf");
+    } catch (x) { if (x.message !== "401") toast(`Lancement refusé : ${x.message}`); veille.disabled = false; }
+  });
+  const parJoueur = {};
+  for (const p of validees) (parJoueur[p.joueur] ||= []).push(p);
+  afficher(
+    entete("Photos", aValider.length ? `${aValider.length} à valider` : "La banque des Bleus", { retour: true }),
+    el("div", { class: "carte veille" },
+      el("div", {},
+        el("p", { class: "r-titre", texte: "Photos libres de droits" }),
+        el("p", { class: "aide", texte: index.verifie_le ? `Dernière veille : ${quandCourt(index.verifie_le)}` : "Pas encore de veille" }),
+        el("p", { class: "aide", texte: "Wikimedia Commons, moins de 2 ans, jamais avant l'arrivée du joueur dans son équipe. Chaque lundi." })),
+      veille),
+    el("section", { class: "section" }, el("h2", { texte: "À valider" }),
+      aValider.length ? el("div", { class: "ph-grille" }, aValider.map((p) => cartePhoto(p, choix, majBarre)))
+        : el("p", { class: "aide", texte: "Rien à valider. Les photos trouvées arrivent ici, avec une notification." })),
+    el("section", { class: "section" }, el("h2", { texte: `Validées · ${validees.length}` }),
+      validees.length ? Object.entries(parJoueur).sort().map(([nom, liste]) => el("div", { class: "ph-joueur" },
+        el("p", { class: "aide", texte: `${nom} · ${pluriel(liste.length, "photo")} + le portrait officiel, à tour de rôle` }),
+        el("div", { class: "ph-grille" }, liste.map((p) => cartePhoto(p, choix, majBarre)))))
+        : el("p", { class: "aide", texte: "Aucune photo validée : le carrousel garde les portraits officiels." })),
+    formulaireAjout(index, ecranPhotos),
+    barre);
+  if (Object.keys(envoyes).length) etat.minuterie = setInterval(ecranPhotos, 30000);
+}
+
 function router() {
   clearInterval(etat.minuterie);
   if (!etat.jeton || !etat.depot) { ecranConnexion(); return; }
@@ -1954,6 +2105,7 @@ function router() {
   else if (route === "bleus") ecranBleus();
   else if (route === "citations") ecranCitations();
   else if (route === "mercato") ecranMercato();
+  else if (route === "photos") ecranPhotos();
   else if (route.startsWith("mercato/")) ecranMouvement(decodeURIComponent(route.slice(8)));
   else if (route.startsWith("production/")) ecranNuit(decodeURIComponent(route.slice(11)));
   else ecranListe();

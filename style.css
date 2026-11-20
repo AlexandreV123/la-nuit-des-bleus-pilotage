@@ -286,3 +286,21 @@ details.plus .liste{margin-top:8px}
 .z-edit{margin:2px 0 6px;display:flex;flex-direction:column;gap:4px}
 .z-option a{color:var(--fluo)}
 textarea.z-texte{min-height:90px}
+
+/* --- la banque de photos --- */
+.ph-grille{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.ph-carte{padding:10px;display:flex;flex-direction:column;gap:8px}
+.ph-carte .r-titre{margin:0;font-size:14px}
+.ph-img{width:100%;aspect-ratio:1040/760;object-fit:contain;border-radius:10px;
+  background:radial-gradient(ellipse at 50% 45%,rgba(43,76,255,.45),transparent 70%),#0B1230}
+.ph-meta{font-size:12px;color:var(--gris);line-height:1.4;margin:0}
+.ph-meta a{color:var(--gris)}
+.ph-boutons{display:flex;gap:6px}
+.ph-boutons .btn.mini-b{padding:8px 6px;font-size:13px;min-height:0}
+.ph-carte.validee{border-color:rgba(215,255,62,.6)}
+.ph-carte.validee .ph-boutons .btn:first-child{background:rgba(215,255,62,.14);color:var(--fluo)}
+.ph-carte.refusee{opacity:.45}
+.ph-carte.modifiee{box-shadow:0 0 0 2px rgba(215,255,62,.35)}
+.ph-joueur{margin-top:12px}
+.ph-joueur > .aide{margin:0 0 8px}
+.ph-barre{position:sticky;bottom:14px;z-index:5;margin-top:18px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
