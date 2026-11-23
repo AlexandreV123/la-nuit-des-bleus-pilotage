@@ -1529,7 +1529,16 @@ function optionsDe(c) {
   if (o.texte != null && o.texte.trim() && o.texte.trim() !== c.citation) sortie.texte = o.texte.trim().slice(0, TEXTE_MAX);
   if (o.contexte && o.contexte.trim()) sortie.contexte = o.contexte.trim().slice(0, CONTEXTE_MAX);
   if (o.moment && o.moment !== "auto") sortie.moment = o.moment;
+  if (o.traduction && o.traduction.trim()) sortie.traduction = o.traduction.trim().slice(0, TEXTE_MAX);
   return sortie;
+}
+
+/** Une proposition de traduction, faite dans le navigateur (Chrome de bureau : traduction
+ *  intégrée, sur l'appareil, sans service extérieur). Ailleurs, le bouton n'apparaît pas. */
+async function proposerTraduction(texte) {
+  if (!("Translator" in self)) return null;
+  const traducteur = await self.Translator.create({ sourceLanguage: "en", targetLanguage: "fr" });
+  return traducteur.translate(texte);
 }
 
 function reglagesCitation(c) {
@@ -1578,7 +1587,31 @@ function reglagesCitation(c) {
         onclick: () => { contexte.value = p.slice(0, CONTEXTE_MAX); o.contexte = contexte.value; majCtx(); } },
         p.length > 60 ? `${p.slice(0, 58)}…` : p))) : null,
     contexte, el("div", { class: "r-pied" }, el("span"), compteCtx),
-    el("label", { class: "r-titre", texte: "Moment du propos" }), moment);
+    el("label", { class: "r-titre", texte: "Moment du propos" }), moment,
+    c.langue === "en" ? blocTraduction(c, o, texte) : null);
+}
+
+/** Propos en anglais : la traduction française passe en grand sur la slide, la VO en petit. */
+function blocTraduction(c, o, zoneTexte) {
+  const trad = el("textarea", { class: "court", maxlength: String(TEXTE_MAX),
+    placeholder: "Traduction française du texte de la slide (vivement conseillée)" });
+  trad.value = o.traduction || "";
+  const compteur = el("small", { class: "compteur" });
+  const maj = () => { compteur.textContent = `${trad.value.length}/${TEXTE_MAX}`;
+    compteur.classList.toggle("trop", trad.value.length > TEXTE_MAX); };
+  trad.addEventListener("input", () => { o.traduction = trad.value; maj(); });
+  maj();
+  const bouton = "Translator" in self ? el("button", { class: "btn", onclick: async () => {
+    try {
+      bouton.disabled = true;
+      const t = await proposerTraduction(zoneTexte.value || c.citation);
+      if (t) { trad.value = t.slice(0, TEXTE_MAX); o.traduction = trad.value; maj(); toast("Proposition à relire et corriger."); }
+    } catch { toast("Traduction automatique indisponible sur cet appareil."); }
+    finally { bouton.disabled = false; }
+  } }, "Proposer une traduction") : null;
+  return el("div", {},
+    el("label", { class: "r-titre", texte: "Traduction française (en grand, la VO en petit dessous)" }), trad,
+    el("div", { class: "r-pied" }, bouton || el("span"), compteur));
 }
 /** Le dossier d'une production, depuis la racine de la branche (l'index le note sans « citations/ »). */
 const cheminProduction = (p) => (p.dossier.startsWith("citations/") ? p.dossier : `citations/${p.dossier}`);
@@ -1786,6 +1819,8 @@ async function ecranCitations() {
     const choisies = candidats.filter((c) => etat.citSel.has(c.id));
     const fmt = formatPour(choisies);
     if (!fmt) return;
+    const sansTrad = choisies.filter((c) => c.langue === "en" && !(etat.citOpt[c.id]?.traduction || "").trim());
+    if (sansTrad.length && !confirm(`${sansTrad.length > 1 ? `${sansTrad.length} propos en anglais n'ont` : "Un propos en anglais n'a"} pas de traduction : la slide sera en VO. Générer quand même ?`)) return;
     bouton.disabled = true;
     try {
       await gh(`/repos/${etat.depot}/actions/workflows/${CITATIONS}/dispatches`, {
