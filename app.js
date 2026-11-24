@@ -289,7 +289,8 @@ async function ecranListe() {
 const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations", recap: "Le récap",
                            ladders: "Le classement", mercato: "Le mouvement",
                            story: "La story du programme", vote: "La story de vote",
-                           duel: "L'affiche du Choc des Bleus", tirs: "La carte des tirs" };
+                           duel: "L'affiche du Choc des Bleus", tirs: "La carte des tirs",
+                           archive: "La story archives", quiz: "Le quiz en story" };
 const rangFr = (n) => (Number(n) === 1 ? "1er" : `${n}e`);
 
 /** « Wembanyama 2e · Sarr 9e », ou rien si aucun Français n'est classé. */
