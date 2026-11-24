@@ -292,7 +292,7 @@ const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations"
                            duel: "L'affiche du Duel de Bleus", tirs: "La carte des tirs",
                            archive: "La story archives", quiz: "Le quiz en story",
                            infirmerie: "La story infirmerie", bulletin: "Le bulletin du mois",
-                           reel_court: "La nuit en 15 secondes" };
+                           reel_court: "La nuit en 15 secondes", guide: "Le guide des Français (à épingler)" };
 const rangFr = (n) => (Number(n) === 1 ? "1er" : `${n}e`);
 
 /** « Wembanyama 2e · Sarr 9e », ou rien si aucun Français n'est classé. */
