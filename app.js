@@ -311,7 +311,7 @@ function sectionClassements(editions) {
     class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(chemin(e))}`),
   },
     el("span", { class: "date", texte: e.titre }),
-    el("span", { class: "meta", texte: francaisClasses(e.francais) || "Aucun Français classé" }),
+    el("span", { class: "meta", texte: e.sous_titre || francaisClasses(e.francais) || "Aucun Français classé" }),
     el("span", { class: "pastilles" },
       estPubliee(chemin(e), "ladders") ? el("span", { class: "pastille orange", texte: "Publié ✓" }) : null));
   editions.slice(4).forEach((e) => tous.append(carte(e)));
@@ -1143,7 +1143,7 @@ async function ecranNuit(nuit) {
   afficher(
     entete(fiche.date_fr || fiche.titre || fiche.nuit,
            resumeTexte(fiche.resume)
-             || (fiche.publication === "ladders" ? francaisClasses(fiche.francais) || "Aucun Français classé" : "")
+             || (fiche.publication === "ladders" ? fiche.sous_titre || francaisClasses(fiche.francais) || "Aucun Français classé" : "")
              || (fiche.publication === "mercato" ? fiche.sous_titre : "")
              || FORMATS[fiche.format] || "", { retour: true }),
     fiche.source && fiche.publication === "ladders"
