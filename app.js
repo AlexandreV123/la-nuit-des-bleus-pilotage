@@ -260,10 +260,13 @@ async function ecranListe() {
   catch (x) { if (x.message === "401") return; }
   try { ladders = (await (await contenu("ladders/index.json")).json()).editions || []; }
   catch (x) { if (x.message === "401") return; }
-  let mouvements = [];
+  let mouvements = [], bleus = [];
   try { mouvements = (await (await contenu("mercato/index.json")).json()).mouvements || []; }
   catch (x) { if (x.message === "401") return; }
+  try { bleus = (await (await contenu("edf/index.json")).json()).matchs || []; }
+  catch (x) { if (x.message === "401") return; }
   afficher(tete, carteEtat(index),
+    bleus.length ? sectionEquipeDeFrance(bleus) : null,
     mouvements.length ? sectionMercato(mouvements) : null,
     recaps.length ? el("section", { class: "section" }, el("h2", { texte: "La semaine des Bleus" }),
       el("div", { class: "liste" }, recaps.slice(0, 2).map((r) => el("button", {
@@ -288,6 +291,7 @@ async function ecranListe() {
 
 const NOMS_PUBLICATION = { carrousel: "Le carrousel", citations: "Les citations", recap: "Le récap",
                            ladders: "Le classement", mercato: "Le mouvement",
+                           edf: "Le carrousel du match", edf_story: "La story d'avant-match",
                            story: "La story du programme", vote: "La story de vote",
                            duel: "L'affiche du Duel de Bleus", tirs: "La carte des tirs",
                            archive: "La story archives", quiz: "Le quiz en story",
@@ -321,6 +325,31 @@ function sectionClassements(editions) {
       tous.classList.toggle("cache");
       ev.currentTarget.textContent = tous.classList.contains("cache") ? "Éditions précédentes" : "Masquer";
     } }, "Éditions précédentes") : null,
+    tous);
+}
+
+/* --- l'équipe de France : un dossier par match (edf/), la story le matin du match,
+ * le carrousel le lendemain ; les trois derniers matchs, les autres sous un lien. */
+function sectionEquipeDeFrance(matchs) {
+  const chemin = (e) => `edf/${e.dossier}`;
+  const tous = el("div", { class: "liste cache" });
+  const carte = (e) => el("button", {
+    class: "carte nuit", onclick: () => (location.hash = `#/production/${encodeURIComponent(chemin(e))}`),
+  },
+    el("span", { class: "date", texte: e.titre }),
+    el("span", { class: "meta", texte: [e.sous_titre, e.competition].filter(Boolean).join(" · ") }),
+    el("span", { class: "pastilles" },
+      e.etapes?.story ? el("span", { class: estPubliee(chemin(e), "edf_story") ? "pastille bleu" : "pastille",
+                                     texte: estPubliee(chemin(e), "edf_story") ? "Story publiée ✓" : "Story" }) : null,
+      e.etapes?.carrousel ? el("span", { class: estPubliee(chemin(e), "edf") ? "pastille bleu" : "pastille",
+                                         texte: estPubliee(chemin(e), "edf") ? "Carrousel publié ✓" : "Carrousel" }) : null));
+  matchs.slice(3).forEach((e) => tous.append(carte(e)));
+  return el("section", { class: "section" }, el("h2", { texte: "L'équipe de France" }),
+    el("div", { class: "liste" }, matchs.slice(0, 3).map(carte)),
+    matchs.length > 3 ? el("button", { class: "lien", onclick: (ev) => {
+      tous.classList.toggle("cache");
+      ev.currentTarget.textContent = tous.classList.contains("cache") ? "Matchs précédents" : "Masquer";
+    } }, "Matchs précédents") : null,
     tous);
 }
 
@@ -1144,12 +1173,17 @@ async function ecranNuit(nuit) {
     entete(fiche.date_fr || fiche.titre || fiche.nuit,
            resumeTexte(fiche.resume)
              || (fiche.publication === "ladders" ? fiche.sous_titre || francaisClasses(fiche.francais) || "Aucun Français classé" : "")
-             || (fiche.publication === "mercato" ? fiche.sous_titre : "")
+             || (["mercato", "edf"].includes(fiche.publication) ? fiche.sous_titre : "")
              || FORMATS[fiche.format] || "", { retour: true }),
     fiche.source && fiche.publication === "ladders"
       ? el("p", { class: "aide" }, "Source : ",
           el("a", { href: fiche.source, target: "_blank", rel: "noopener noreferrer", texte: "NBA.com" }),
           " — publier une édition sur deux suffit.")
+      : null,
+    fiche.publication === "edf" && fiche.source
+      ? el("p", { class: "aide" }, "Source : ",
+          el("a", { href: fiche.source, target: "_blank", rel: "noopener noreferrer", texte: "FIBA" }),
+          " — la feuille de match est recalculée depuis le déroulé du match.")
       : null,
     fiche.publication === "mercato" && fiche.lien
       ? el("p", { class: "aide" }, "Source : ",
